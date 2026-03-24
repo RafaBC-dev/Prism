@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# IDEs (PyCharm / VS Code)
+.idea/
+.vscode/
+
+# Binarios pesados (El usuario debe bajarlos aparte)
+ffmpeg/
+poppler/
+
+# Configuración local y logs
+config.json
+*.log
+
+# Modelos de IA (Whisper/Demucs suelen bajar modelos a la carpeta de usuario, 
+# pero si los guardas en el proyecto, ignóralos aquí)
+models/
+.cache/
