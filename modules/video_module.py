@@ -5,7 +5,6 @@ Video Module — Prism (Layout 3 Columnas + Info Técnica)
 import os
 import subprocess
 import json
-import shutil
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
@@ -22,9 +21,12 @@ VIDEO_EXTS = [".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv", ".flv", ".m4v"]
 TOOLS = [
     ("convert",   "🎬", "Convertir y Escalar"),
     ("audio",     "🔊", "Normalizar Audio"),
+    ("cut",       "✂️", "Recortar Vídeo"),
+    ("join",      "🔗", "Unir Vídeos"),
     ("subs",      "💬", "Pegar Subtítulos"),
-    ("gif",       "🎞️", "Vídeo a GIF "), 
+    ("gif",       "🎞️", "Vídeo a GIF"), 
 ]
+
 # ── Widget de Vista Previa Técnica ──────────────────────────────────────────
 
 class VideoPreviewPanel(ctk.CTkFrame):
@@ -58,7 +60,6 @@ class VideoPreviewPanel(ctk.CTkFrame):
         self.info_after.configure(state="disabled")
 
     def _get_video_specs(self, path):
-        """Helper centralizado para sacar la ficha técnica de un vídeo con ffprobe."""
         try:
             cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path]
             raw = subprocess.check_output(cmd, text=True)
@@ -82,37 +83,32 @@ class VideoPreviewPanel(ctk.CTkFrame):
             return None
 
     def update_info(self, path):
-        """Actualiza la caja superior con el archivo original."""
         if not path or not os.path.exists(path): return
-        
         lines = self._get_video_specs(path)
         self.info_before.configure(state="normal")
         self.info_before.delete("1.0", "end")
-        
         if lines:
             self.info_before.insert("1.0", "\n".join(lines))
         else:
             self.info_before.insert("1.0", "No se pudo analizar el archivo original.")
-            
         self.info_before.configure(state="disabled")
         self.update_result("Esperando ejecución...")
 
     def update_result(self, text):
-        """Actualiza la caja inferior. Si el texto es una ruta, extrae sus datos."""
         self.info_after.configure(state="normal")
         self.info_after.delete("1.0", "end")
-        
-        # Magia: Si el texto que recibe es una ruta de archivo válida, le sacamos la ficha técnica
-        if os.path.isfile(text):
-            lines = self._get_video_specs(text)
-            if lines:
-                self.info_after.insert("1.0", "\n".join(lines))
+        try:
+            if os.path.exists(text) and os.path.isfile(text):
+                lines = self._get_video_specs(text)
+                if lines:
+                    self.info_after.insert("1.0", "\n".join(lines))
+                else:
+                    self.info_after.insert("1.0", f"Guardado en:\n{text}")
             else:
-                self.info_after.insert("1.0", f"Guardado en:\n{text}")
-        else:
-            # Si no es un archivo (ej: un mensaje de error o aviso), lo imprime normal
+                self.info_after.insert("1.0", text)
+        except Exception:
+            # Si text tiene caracteres no válidos para una ruta, caerá aquí
             self.info_after.insert("1.0", text)
-            
         self.info_after.configure(state="disabled")
 
 # ── Panel base ────────────────────────────────────────────────────────────────
@@ -146,7 +142,6 @@ class _BaseVideoPanel(ctk.CTkFrame):
     def _on_drop(self, paths):
         if not self.multi_file: self._file_list.clear()
         self._file_list.add_files(paths)
-        # Actualizar Preview automáticamente
         if paths and hasattr(self.master, 'preview'):
             self.master.preview.update_info(paths[0])
 
@@ -160,13 +155,9 @@ class _BaseVideoPanel(ctk.CTkFrame):
 
     def _on_done(self, job):
         if job.status == JobStatus.DONE:
-            # 1. Enviar el texto de resultado al panel de la derecha
             if hasattr(self.master, 'preview'):
                 self.master.preview.update_result(job.result)
-            
-            # 2. Mostrar la ventana emergente habitual
             messagebox.showinfo("Listo", f"Completado:\n\n{job.result}")
-            
         elif job.status == JobStatus.ERROR:
             if hasattr(self.master, 'preview'):
                 self.master.preview.update_result(f"Error:\n{job.error}")
@@ -183,8 +174,8 @@ class _BaseVideoPanel(ctk.CTkFrame):
 
 class ConvertPanel(_BaseVideoPanel):
     title = "Convertir vídeo"
-    description = "Cambia el formato y ajusta la calidad usando hardware de vídeo."
-    multi_file = True
+    description = "Cambia el formato y ajusta la calidad."
+    multi_file = False
 
     def _build_options(self):
         f = self._section("Ajustes")
@@ -199,59 +190,79 @@ class ConvertPanel(_BaseVideoPanel):
     def _run(self):
         paths = self._file_list.paths
         if not paths: return
-        
-        gpu_codec = self.app.backend.gpu_codec if self.app.backend else "libx264"
         fmt = self._fmt.get().lower()
-        crf = {"Alta": "18", "Normal": "23", "Baja": "28"}[self._quality.get()]
-        
-        if len(paths) == 1:
-            out = filedialog.asksaveasfilename(defaultextension=f".{fmt}", initialfile="convertido."+fmt)
-            if not out: return
-            self.app.job_queue.submit(f"Vídeo: Convertir {os.path.basename(paths[0])}",
-                                      _convert_single_video, paths[0], out, fmt, crf, gpu_codec,
-                                      on_done=self._on_done)
-        else:
-            out_dir = filedialog.askdirectory()
-            if not out_dir: return
-            self.app.job_queue.submit(f"Vídeo: Batch {len(paths)} archivos",
-                                      _convert_batch_video, paths, out_dir, fmt, crf, gpu_codec,
-                                      on_done=self._on_done)
+        out = filedialog.asksaveasfilename(defaultextension=f".{fmt}", initialfile="convertido."+fmt)
+        if not out: return
+        self.app.job_queue.submit(f"Vídeo: Convertir", _video_task, paths[0], out, "convert", {}, on_done=self._on_done)
 
-class CompressPanel(_BaseVideoPanel):
-    title = "Comprimir vídeo"
-    description = "Reduce el peso del vídeo optimizando el bitrate."
+class VideoAudioPanel(_BaseVideoPanel):
+    title = "Normalización de Audio Profesional"
+    description = "Ajusta el volumen al estándar EBU R128 (ideal para YouTube/TV)."
 
     def _build_options(self):
-        f = self._section("Nivel de compresión")
-        
-        # Sub-contenedor agrupado a la izquierda
-        opts = ctk.CTkFrame(f, fg_color="transparent")
-        opts.grid(row=1, column=0, padx=14, pady=(5, 15), sticky="w")
-        
-        # Etiqueta de porcentaje
-        self._pct_label = ctk.CTkLabel(opts, text="50%", font=("Segoe UI", 12, "bold"), text_color=ACCENT)
-        self._pct_label.grid(row=0, column=0, pady=(0, 5), sticky="w")
-
-        # Slider con anchura fija para que no se encoja
-        self._crf = ctk.CTkSlider(opts, from_=18, to=32, number_of_steps=14, command=self._update_label, width=350)
-        self._crf.set(26)
-        self._crf.grid(row=1, column=0, pady=(0, 5), sticky="w")
-
-    def _update_label(self, val):
-        # Mapeo directo: 18 (0%) a 32 (100%)
-        pct = int(((val - 18) / (32 - 18)) * 100)
-        self._pct_label.configure(text=f"{pct}%")
+        f = self._section("Info de Audio")
+        info = ("Aplica un filtro 'Loudnorm' para evitar saltos de volumen.\n"
+                "El vídeo no se recodifica (es rápido), solo el audio.")
+        ctk.CTkLabel(f, text=info, font=("Segoe UI", 11), text_color=TEXT_SEC, justify="left").grid(row=1, column=0, padx=14, pady=(0,15))
 
     def _run(self):
         paths = self._file_list.paths
         if not paths: return
-        gpu_codec = self.app.backend.gpu_codec if self.app.backend else "libx264"
-        crf = str(int(self._crf.get()))
-        out = filedialog.asksaveasfilename(defaultextension=".mp4", initialfile="comprimido.mp4")
+        out = filedialog.asksaveasfilename(defaultextension=".mp4", initialfile="audio_normalizado.mp4")
         if not out: return
-        self.app.job_queue.submit(f"Vídeo: Comprimiendo {os.path.basename(paths[0])}",
-                                  _compress_video, paths[0], out, crf, gpu_codec,
-                                  on_done=self._on_done)
+        self.app.job_queue.submit(f"Normalizando", _video_task, paths[0], out, mode="audio", on_done=self._on_done)
+
+class CutPanel(_BaseVideoPanel):
+    title = "Recortar vídeo"
+    description = "Extrae un fragmento sin perder calidad (Stream Copy)."
+
+    def _build_options(self):
+        f = self._section("Tiempos (hh:mm:ss)")
+        opts = ctk.CTkFrame(f, fg_color="transparent")
+        opts.grid(row=1, column=0, padx=14, pady=(5, 15), sticky="w")
+        
+        ctk.CTkLabel(opts, text="Inicio:", font=("Segoe UI", 12)).grid(row=0, column=0, pady=5, sticky="w")
+        self._start = ctk.CTkEntry(opts, placeholder_text="00:00:00", width=100)
+        self._start.grid(row=0, column=1, padx=(15, 0), pady=5, sticky="w")
+
+        ctk.CTkLabel(opts, text="Fin:", font=("Segoe UI", 12)).grid(row=1, column=0, pady=5, sticky="w")
+        self._end = ctk.CTkEntry(opts, placeholder_text="00:00:10", width=100)
+        self._end.grid(row=1, column=1, padx=(15, 0), pady=5, sticky="w")
+
+    def _run(self):
+        paths = self._file_list.paths
+        if not paths: return
+        start = self._start.get() or "00:00:00"
+        end = self._end.get()
+        if not end:
+            messagebox.showwarning("Faltan datos", "Indica el tiempo de fin.")
+            return
+
+        out = filedialog.asksaveasfilename(defaultextension=".mp4", initialfile="recorte.mp4")
+        if not out: return
+        self.app.job_queue.submit(f"Recortando", _cut_video_task, paths[0], out, start, end, on_done=self._on_done)
+
+class JoinPanel(_BaseVideoPanel):
+    title = "Unir Vídeos"
+    description = "Une varios vídeos en un solo archivo de forma rápida."
+    multi_file = True
+
+    def _build_options(self):
+        f = self._section("Ajustes")
+        info = "Asegúrate de soltar los vídeos en el orden correcto.\nSe recomienda que todos tengan el mismo formato y resolución."
+        ctk.CTkLabel(f, text=info, font=("Segoe UI", 11), text_color=TEXT_SEC, justify="left").grid(row=1, column=0, padx=14, pady=(0,15))
+
+    def _run(self):
+        paths = self._file_list.paths
+        if len(paths) < 2:
+            messagebox.showwarning("Faltan vídeos", "Añade al menos 2 vídeos para unirlos.")
+            return
+        
+        ext = os.path.splitext(paths[0])[1]
+        out = filedialog.asksaveasfilename(defaultextension=ext, initialfile=f"unidos{ext}")
+        if not out: return
+
+        self.app.job_queue.submit(f"Uniendo {len(paths)} clips", _join_videos_task, paths, out, on_done=self._on_done)
 
 class VideoSubsPanel(_BaseVideoPanel):
     title = "Incrustar Subtítulos"
@@ -262,25 +273,130 @@ class VideoSubsPanel(_BaseVideoPanel):
         self._srt_path = ctk.StringVar(value="No seleccionado...")
         lbl = ctk.CTkLabel(f, textvariable=self._srt_path, font=("Segoe UI", 11), text_color=ACCENT)
         lbl.grid(row=1, column=0, padx=14, pady=(0, 5), sticky="w")
-        
         btn = ctk.CTkButton(f, text="Seleccionar .srt", height=28, 
                            command=lambda: self._srt_path.set(filedialog.askopenfilename(filetypes=[("Subtítulos", "*.srt")]) or "No seleccionado..."))
         btn.grid(row=2, column=0, padx=14, pady=(0, 15), sticky="w")
 
     def _run(self):
-        path = self._file_list.paths[0] if self._file_list.paths else None
+        paths = self._file_list.paths
         srt = self._srt_path.get()
-        if not path or srt == "No seleccionado...": return
-        
+        if not paths or srt == "No seleccionado...": return
         out = filedialog.asksaveasfilename(defaultextension=".mp4", initialfile="con_subtitulos.mp4")
         if not out: return
+        self.app.job_queue.submit(f"Incrustando subs", _video_task, paths[0], out, "subs", {"srt_path": srt}, on_done=self._on_done)
 
-        self.app.job_queue.submit(f"Incrustando subs", 
-                                 _video_task, path, out, "subs", {"srt_path": srt},
-                                 on_done=self._on_done)
+class GifPanel(_BaseVideoPanel):
+    title = "Convertir a GIF"
+    description = "Crea una animación optimizada a partir de un fragmento."
+
+    def _build_options(self):
+        f = self._section("Ajustes del GIF")
+        opts = ctk.CTkFrame(f, fg_color="transparent")
+        opts.grid(row=1, column=0, padx=14, pady=(5, 15), sticky="w")
+
+        # Tiempos
+        ctk.CTkLabel(opts, text="Inicio (hh:mm:ss):", font=("Segoe UI", 12)).grid(row=0, column=0, pady=5, sticky="w")
+        self._start = ctk.CTkEntry(opts, placeholder_text="00:00:00", width=80)
+        self._start.grid(row=0, column=1, padx=(10, 20), pady=5, sticky="w")
+
+        ctk.CTkLabel(opts, text="Fin (hh:mm:ss):", font=("Segoe UI", 12)).grid(row=0, column=2, pady=5, sticky="w")
+        self._end = ctk.CTkEntry(opts, placeholder_text="00:00:05", width=80)
+        self._end.grid(row=0, column=3, padx=(10, 0), pady=5, sticky="w")
+
+        # Ajustes visuales
+        ctk.CTkLabel(opts, text="FPS:", font=("Segoe UI", 12)).grid(row=1, column=0, pady=5, sticky="w")
+        self._fps = ctk.CTkSegmentedButton(opts, values=["10", "15", "24"])
+        self._fps.set("15")
+        self._fps.grid(row=1, column=1, padx=(10, 20), pady=5, sticky="w")
+
+        ctk.CTkLabel(opts, text="Ancho (px):", font=("Segoe UI", 12)).grid(row=1, column=2, pady=5, sticky="w")
+        self._width = ctk.CTkEntry(opts, placeholder_text="480", width=80)
+        self._width.insert(0, "480")
+        self._width.grid(row=1, column=3, padx=(10, 0), pady=5, sticky="w")
+
+    def _run(self):
+        paths = self._file_list.paths
+        if not paths: return
+        fps = self._fps.get()
+        width = self._width.get()
+        start = self._start.get()
+        end = self._end.get()
+
+        out = filedialog.asksaveasfilename(defaultextension=".gif", initialfile="animacion.gif")
+        if not out: return
+
+        self.app.job_queue.submit(f"Generando GIF", _video_to_gif_task, paths[0], out, fps, width, start, end, on_done=self._on_done)
+
+# ── Tareas de FFmpeg ───────────────
+
+def _cut_video_task(path, out, start, end, progress_cb=None):
+    try:
+        args = ["ffmpeg", "-ss", start, "-to", end, "-i", path, "-c", "copy", "-y", out]
+        subprocess.run(args, check=True, capture_output=True)
+        return out
+    except Exception as e:
+        return f"Error al recortar: {str(e)}"
+
+def _join_videos_task(paths, out, progress_cb=None):
+    """Une varios vídeos usando un archivo de lista temporal para concat."""
+    list_file = "concat_list.txt"
+    try:
+        with open(list_file, "w", encoding="utf-8") as f:
+            for p in paths:
+                clean_path = p.replace("\\", "/").replace("'", "'\\''")
+                f.write(f"file '{clean_path}'\n")
         
+        args = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", "-y", out]
+        subprocess.run(args, check=True, capture_output=True)
+        if os.path.exists(list_file): os.remove(list_file)
+        return out
+    except Exception as e:
+        if os.path.exists(list_file): os.remove(list_file)
+        return f"Error al unir vídeos: {str(e)}"
 
-# ── Módulo Principal ──────────────────────────────────────────────────────────
+def _video_to_gif_task(path, out, fps, width, start, end, progress_cb=None):
+    try:
+        palette = "palette.png"
+        filters = f"fps={fps},scale={width}:-1:flags=lanczos"
+        
+        base_cmd = ["ffmpeg"]
+        if start: base_cmd += ["-ss", start]
+        if end: base_cmd += ["-to", end]
+        
+        cmd_pal = base_cmd + ["-i", path, "-vf", f"{filters},palettegen", "-y", palette]
+        subprocess.run(cmd_pal, check=True, capture_output=True)
+        
+        cmd_gif = base_cmd + ["-i", path, "-i", palette, "-filter_complex", f"{filters}[x];[x][1:v]paletteuse", "-y", out]
+        subprocess.run(cmd_gif, check=True, capture_output=True)
+        
+        if os.path.exists(palette): os.remove(palette)
+        return out
+    except Exception as e:
+        return f"Error al crear GIF: {str(e)}"
+    
+def _video_task(input_path: str, output_path: str, mode="convert", params=None, progress_cb=None):
+    try:
+        cmd = ["ffmpeg", "-i", input_path]
+
+        if mode == "convert":
+            cmd += ["-vf", "scale=1920:-1", "-c:v", "libx264", "-crf", "23", "-preset", "veryfast"]
+        elif mode == "audio":
+            cmd += ["-af", "loudnorm=I=-23:LRA=7:tp=-2", "-c:v", "copy", "-c:a", "aac"]
+        elif mode == "subs":
+            srt_path = params.get("srt_path")
+            clean_srt = srt_path.replace("\\", "/").replace(":", "\\:")
+            cmd += ["-vf", f"subtitles='{clean_srt}'", "-c:a", "copy"]
+
+        cmd += [output_path, "-y"]
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
+        if progress_cb: progress_cb(1.0)
+        return f"Proceso completado:\n{output_path}"
+        
+    except Exception as e:
+        return f"Error inesperado: {str(e)}"
+
+# ── Módulo Principal (UI) ───────────────
 
 class VideoModule(BaseModule):
     module_id = "video"
@@ -290,19 +406,17 @@ class VideoModule(BaseModule):
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, minsize=210)
         
-        # Layout
-        self.columnconfigure(0, weight=0) # Sidebar
-        self.columnconfigure(1, weight=0) # Div
-        self.columnconfigure(2, weight=1) # HERRAMIENTAS 
-        self.columnconfigure(3, weight=0) # Div
-        self.columnconfigure(4, weight=0) # Preview
+        self.columnconfigure(0, weight=0)
+        self.columnconfigure(1, weight=0)
+        self.columnconfigure(2, weight=1)
+        self.columnconfigure(3, weight=0)
+        self.columnconfigure(4, weight=0)
 
         self._panels = {}
         self._tool_btns = {}
         self._active_tool = ""
         
         self._build_sidebar()
-        
         self.preview = VideoPreviewPanel(self)
         self.preview.grid(row=0, column=4, sticky="ns")
 
@@ -331,188 +445,14 @@ class VideoModule(BaseModule):
     def _build_panels(self):
         builders = {
             "convert":   ConvertPanel,
-            "audio": VideoAudioPanel,
+            "audio":     VideoAudioPanel,
+            "cut":       CutPanel,
+            "join":      JoinPanel,
             "subs":      VideoSubsPanel,
-            "gif":       GifPanel  # <--- Lo reconectamos aquí
+            "gif":       GifPanel
         }
         for tid, cls in builders.items():
             panel = cls(self, app=self.app)
             panel.grid(row=0, column=2, sticky="nsew")
             panel.grid_remove()
             self._panels[tid] = panel
-
-
-class VideoAudioPanel(_BaseVideoPanel):
-    title = "Normalización de Audio Profesional"
-    description = "Ajusta el volumen al estándar EBU R128 (ideal para YouTube/TV)."
-
-    def _build_options(self):
-        f = self._section("Info de Audio")
-        info = ("Aplica un filtro 'Loudnorm' para evitar saltos de volumen.\n"
-                "El vídeo no se recodifica (es rápido), solo el audio.")
-        ctk.CTkLabel(f, text=info, font=("Segoe UI", 11), text_color=TEXT_SEC, justify="left").grid(row=1, column=0, padx=14, pady=(0,15))
-
-    def _run(self):
-        path = self._file_list.paths[0] if self._file_list.paths else None
-        if not path: return
-        
-        out = filedialog.asksaveasfilename(defaultextension=".mp4", initialfile="audio_normalizado.mp4")
-        if not out: return
-
-        self.app.job_queue.submit(
-            f"Normalizando: {os.path.basename(path)}",
-            _video_task, path, out, mode="audio",
-            on_done=self._on_done
-        )
-
-
-    # ── Panel: Recortar Vídeo ─────────────────────────────────────────────────────
-
-class CutPanel(_BaseVideoPanel):
-    title = "Recortar vídeo"
-    description = "Extrae un fragmento sin perder calidad (Stream Copy)."
-
-    def _build_options(self):
-        f = self._section("Tiempos (hh:mm:ss)")
-        
-        # Sub-contenedor agrupado a la izquierda
-        opts = ctk.CTkFrame(f, fg_color="transparent")
-        opts.grid(row=1, column=0, padx=14, pady=(5, 15), sticky="w")
-        
-        # Fila 0: Inicio
-        ctk.CTkLabel(opts, text="Inicio:", font=("Segoe UI", 12)).grid(row=0, column=0, pady=5, sticky="w")
-        self._start = ctk.CTkEntry(opts, placeholder_text="00:00:00", width=100)
-        self._start.grid(row=0, column=1, padx=(15, 0), pady=5, sticky="w")
-
-        # Fila 1: Fin
-        ctk.CTkLabel(opts, text="Fin:", font=("Segoe UI", 12)).grid(row=1, column=0, pady=5, sticky="w")
-        self._end = ctk.CTkEntry(opts, placeholder_text="00:00:10", width=100)
-        self._end.grid(row=1, column=1, padx=(15, 0), pady=5, sticky="w")
-
-    def _run(self):
-        paths = self._file_list.paths
-        if not paths: return
-        
-        start = self._start.get() or "00:00:00"
-        end = self._end.get()
-        if not end:
-            messagebox.showwarning("Faltan datos", "Indica el tiempo de fin.")
-            return
-
-        out = filedialog.asksaveasfilename(defaultextension=".mp4", initialfile="recorte.mp4")
-        if not out: return
-
-        self.app.job_queue.submit(
-            f"Vídeo: Recortando {os.path.basename(paths[0])}",
-            _cut_video_task, paths[0], out, start, end,
-            on_done=self._on_done
-        )
-
-# ── Panel: Vídeo a GIF ────────────────────────────────────────────────────────
-
-class GifPanel(_BaseVideoPanel):
-    title = "Convertir a GIF"
-    description = "Crea una animación optimizada a partir de un fragmento."
-
-    def _build_options(self):
-        f = self._section("Ajustes del GIF")
-        
-        # Sub-contenedor alineado a la izquierda para mantener todo el bloque unido
-        opts = ctk.CTkFrame(f, fg_color="transparent")
-        opts.grid(row=1, column=0, padx=14, pady=(5, 15), sticky="w")
-
-        # Fila 0: FPS
-        ctk.CTkLabel(opts, text="FPS (Fluidez):", font=("Segoe UI", 12)).grid(row=0, column=0, pady=5, sticky="w")
-        self._fps = ctk.CTkSegmentedButton(opts, values=["10", "15", "24"])
-        self._fps.set("15")
-        self._fps.grid(row=0, column=1, padx=(15, 0), pady=5, sticky="w")
-
-        # Fila 1: Ancho
-        ctk.CTkLabel(opts, text="Ancho (px):", font=("Segoe UI", 12)).grid(row=1, column=0, pady=5, sticky="w")
-        self._width = ctk.CTkEntry(opts, placeholder_text="480", width=80)
-        self._width.insert(0, "480")
-        self._width.grid(row=1, column=1, padx=(15, 0), pady=5, sticky="w")
-
-    def _run(self):
-        paths = self._file_list.paths
-        if not paths: return
-        
-        fps = self._fps.get()
-        width = self._width.get()
-        out = filedialog.asksaveasfilename(defaultextension=".gif", initialfile="animacion.gif")
-        if not out: return
-
-        self.app.job_queue.submit(
-            f"Vídeo: Generando GIF",
-            _video_to_gif_task, paths[0], out, fps, width,
-            on_done=self._on_done
-        )
-
-# ── Tareas de FFmpeg ───────────────
-
-def _run_ffmpeg(args):
-    subprocess.run(["ffmpeg", "-y"] + args, check=True, capture_output=True)
-
-def _cut_video_task(path, out, start, end, progress_cb=None):
-    """Corta vídeo instantáneamente usando 'copy' para no recodificar."""
-    try:
-        # Usamos -ss ANTES de -i para que sea mucho más rápido en archivos grandes
-        args = ["ffmpeg", "-ss", start, "-to", end, "-i", path, "-c", "copy", "-y", out]
-        subprocess.run(args, check=True, capture_output=True)
-        return out
-    except Exception as e:
-        return f"Error al recortar: {str(e)}"
-
-def _video_to_gif_task(path, out, fps, width, progress_cb=None):
-    """Genera un GIF de alta calidad usando una paleta de colores optimizada."""
-    try:
-        # Paso 1: Generar paleta de colores para que el GIF no se vea con manchas
-        palette = "palette.png"
-        filters = f"fps={fps},scale={width}:-1:flags=lanczos"
-        subprocess.run(["ffmpeg", "-i", path, "-vf", f"{filters},palettegen", "-y", palette], check=True)
-        
-        # Paso 2: Crear el GIF usando la paleta
-        subprocess.run(["ffmpeg", "-i", path, "-i", palette, "-filter_complex", f"{filters}[x];[x][1:v]paletteuse", "-y", out], check=True)
-        
-        if os.path.exists(palette): os.remove(palette)
-        return out
-    except Exception as e:
-        return f"Error al crear GIF: {str(e)}"
-    
-def _video_task(input_path: str, output_path: str, mode="convert", params=None, progress_cb=None):
-    """Motor FFmpeg para reescalado, normalización y subtítulos."""
-    try:
-        # Buscamos el ejecutable de FFmpeg en tu carpeta core o sistema
-        ffmpeg_exe = r"ffmpeg\bin\ffmpeg.exe" # Ajusta a tu ruta real
-        
-        cmd = [ffmpeg_exe, "-i", input_path]
-
-        # --- MODO 1: CONVERTIR Y ESCALAR (Ej: 4K a 1080p) ---
-        if mode == "convert":
-            scale = params.get("scale", "1920:-1") # Por defecto 1080p
-            cmd += ["-vf", f"scale={scale}", "-c:v", "libx264", "-crf", "23", "-preset", "veryfast"]
-
-        # --- MODO 2: NORMALIZACIÓN DE AUDIO (Estándar EBU R128) ---
-        elif mode == "audio":
-            # Esto iguala el volumen de todos tus vídeos para que suenen igual de fuerte
-            cmd += ["-af", "loudnorm=I=-23:LRA=7:tp=-2", "-c:v", "copy", "-c:a", "aac"]
-
-        # --- MODO 3: INCRUSTAR SUBTÍTULOS (.srt a .mp4) ---
-        elif mode == "subs":
-            srt_path = params.get("srt_path")
-            # Importante: FFmpeg requiere escapar las rutas en el filtro de subtítulos
-            clean_srt = srt_path.replace("\\", "/").replace(":", "\\:")
-            cmd += ["-vf", f"subtitles='{clean_srt}'", "-c:a", "copy"]
-
-        cmd += [output_path, "-y"]
-
-        # Ejecutamos sin bloquear la UI
-        process = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
-        if progress_cb: progress_cb(1.0)
-        return f"Proceso completado:\n{output_path}"
-        
-    except subprocess.CalledProcessError as e:
-        return f"Error en FFmpeg: {e.stderr}"
-    except Exception as e:
-        return f"Error inesperado: {str(e)}"

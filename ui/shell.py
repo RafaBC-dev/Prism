@@ -53,9 +53,6 @@ class PrismShell(TkinterDnD.Tk):
         # Interceptar el botón de la 'X' para minimizar en lugar de cerrar
         self.protocol('WM_DELETE_WINDOW', self._hide_window)
 
-        from core.config import load_config
-        self._shared_sb_width = load_config("sidebar_width", 220)
-
         self.job_queue = JobQueue(max_workers=2)
         self.backend = None
 
@@ -324,36 +321,6 @@ class PrismShell(TkinterDnD.Tk):
     def submit_job(self, name: str, fn, *args, on_done=None, **kwargs):
         return self.job_queue.submit(name, fn, *args, on_done=on_done, **kwargs)
 
-    # ── System Tray ───────────────────────────────────────────────────────────
-
-    def _hide_window(self):
-        """Oculta la ventana y activa el icono en el área de notificación."""
-        self.withdraw()
-
-        try:
-            image = Image.open("icon.png")
-        except Exception:
-            # Si no hay icono, creamos una imagen negra por defecto
-            image = Image.new('RGB', (64, 64), color='black')
-
-        menu = pystray.Menu(
-            pystray.MenuItem('Abrir Prism', self._show_window, default=True),
-            pystray.MenuItem('Salir', self._quit_app)
-        )
-        self.tray_icon = pystray.Icon("Prism", image, "Prism", menu)
-
-        # El tray icon debe ejecutarse en su propio hilo para no bloquear
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
-
-    def _show_window(self, icon, item):
-        """Restaura la ventana principal."""
-        self.tray_icon.stop()
-        self.after(0, self.deiconify)
-
-    def _quit_app(self, icon, item):
-        """Cierra la aplicación por completo."""
-        self.tray_icon.stop()
-        self.quit()
 
     # ── System Tray ───────────────────────────────────────────────────────────
 

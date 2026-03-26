@@ -83,16 +83,6 @@ class _BaseSheetPanel(ctk.CTkFrame):
                      text_color=TEXT_SEC).grid(row=0, column=0, padx=14, pady=(10,6), sticky="w")
         return f
 
-    def _run(self):
-        paths = self._file_list.paths
-        if not paths: return
-        fmt = self._target_fmt.get().lower()
-        out = filedialog.asksaveasfilename(defaultextension="."+fmt, initialfile="resultado."+fmt)
-        if not out: return
-
-        opts = {"clean_dupes": self._opt_dupes.get(), "clean_rows": self._opt_empty.get()}
-        self.app.job_queue.submit(f"Pandas: {len(paths)} archivos", _heavy_sheet_task, paths, out, opts, on_done=self._on_done)
-
 
 class SheetUniversalPanel(_BaseSheetPanel):
     title = "Procesamiento Universal"
@@ -234,12 +224,11 @@ class SheetsModule(BaseModule):
         self._tool_btns[tool_id].configure(fg_color=BG_ITEM, text_color=TEXT_PRI)
 
     def receive_files(self, paths):
-        sheets = [p for p in paths if os.path.splitext(p)[1].lower() in SHEET_EXTS]
-        if not sheets:
-            return
         panel = self._panels.get(self._active_tool)
-        if panel and hasattr(panel, "_file_list"):
-            panel._file_list.add_files(sheets)
+        if panel and hasattr(panel, "allowed_exts"):
+            sheets = [p for p in paths if os.path.splitext(p)[1].lower() in panel.allowed_exts]
+            if sheets:
+                panel._file_list.add_files(sheets)
 
     def _build_panels(self):
         builders = {
@@ -268,6 +257,8 @@ def _heavy_sheet_task(paths: list, output_path: str, options: dict, progress_cb=
             # Limpieza profesional bajo demanda
             if options.get("clean_rows"): df.dropna(how='all', inplace=True)
             if options.get("clean_dupes"): df.drop_duplicates(inplace=True)
+            if options.get("strip_spaces"):
+                df = df.map(lambda x: x.strip() if isinstance(x, str) else x)
             
             dfs.append(df)
             if progress_cb: progress_cb((i + 0.5) / len(paths))
@@ -297,12 +288,16 @@ def _split_sheets_pandas(path: str, out_dir: str, progress_cb=None):
 
 
 def _get_enhanced_preview(path):
-    """Genera vista previa y estadísticas del archivo."""
+    """Genera vista previa y estadísticas reales del archivo."""
     ext = os.path.splitext(path)[1].lower()
-    df = pd.read_csv(path, nrows=20) if ext == ".csv" else pd.read_excel(path, nrows=20)
     
-    # Estadísticas básicas
-    info = f"Filas totales (aprox): {len(df)}\nColumnas: {list(df.columns)}\n"
-    stats = df.describe(include='all').to_string() # Resumen estadístico
+    # Leemos el archivo con el motor robusto para tener estadísticas reales
+    df = pd.read_csv(path, sep=None, engine='python', encoding='utf-8-sig') if ext == ".csv" else pd.read_excel(path)
     
-    return f"{info}\n--- Primeras 20 filas ---\n{df.to_string(index=False)}\n\n--- Resumen Estadístico ---\n{stats}"
+    info = f"Filas totales: {len(df)}\nColumnas: {list(df.columns)}\n"
+    stats = df.describe(include='all').to_string() 
+    
+    # Extraemos solo 20 filas para no colapsar la interfaz visual
+    preview_str = df.head(20).to_string(index=False)
+    
+    return f"{info}\n--- Primeras 20 filas ---\n{preview_str}\n\n--- Resumen Estadístico ---\n{stats}"

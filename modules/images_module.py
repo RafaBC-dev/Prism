@@ -6,8 +6,7 @@ import os
 import customtkinter as ctk
 from PIL import Image
 import onnxruntime as ort
-from rembg import remove, new_session
-from tkinter import messagebox, filedialog  # <--- Vital para los diálogos
+from tkinter import messagebox, filedialog 
 
 # Importamos las bases y constantes del proyecto
 from modules.base_module import (
@@ -33,6 +32,7 @@ TOOLS = [
 # ── Lógica de IA (Motor) ──────────────────────────────────────────────────────
 
 def _get_ai_session():
+    from rembg import new_session
     """Detecta el mejor hardware disponible (GPU/CPU) para la IA."""
     providers = ort.get_available_providers()
     
@@ -47,6 +47,7 @@ def _get_ai_session():
     return new_session("u2net", providers=sel_provider)
 
 def _ai_remove_bg_task(input_path: str, output_path: str, progress_cb=None):
+    from rembg import remove
     """Tarea principal de eliminación de fondo para la cola de trabajos."""
     try:
         session = _get_ai_session()
@@ -533,17 +534,9 @@ class FromPdfPanel(_BaseImgPanel):
 # Funciones de operación
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _pil():
-    try:
-        from PIL import Image
-        return Image
-    except ImportError:
-        raise RuntimeError("Instala Pillow: pip install pillow")
-
-
 def _save_img(img, path: str, fmt: str, quality: int):
     """Guarda imagen normalizando el formato y alpha channel."""
-    Image = _pil()
+    
     fmt = fmt.lower()
     
     if fmt == "jpg":
@@ -572,7 +565,7 @@ def _save_img(img, path: str, fmt: str, quality: int):
 # ── Convertir ─────────────────────────────────────────────────────────────────
 
 def _convert_single(src: str, out: str, fmt: str, quality: int, progress_cb=None) -> str:
-    Image = _pil()
+    
     img = Image.open(src)
     _save_img(img, out, fmt, quality)
     if progress_cb: progress_cb(1.0)
@@ -580,7 +573,7 @@ def _convert_single(src: str, out: str, fmt: str, quality: int, progress_cb=None
 
 
 def _convert_batch(paths: list, out_dir: str, fmt: str, quality: int, progress_cb=None) -> str:
-    Image = _pil()
+    
     ext = ".jpg" if fmt == "jpg" else f".{fmt}"
     for i, src in enumerate(paths):
         img = Image.open(src)
@@ -604,10 +597,10 @@ def _calc_size(orig_w, orig_h, mode: str, val: float):
 
 
 def _resize_single(src: str, out: str, mode: str, val: float, progress_cb=None) -> str:
-    Image = _pil()
+    
     img = Image.open(src)
     new_w, new_h = _calc_size(img.width, img.height, mode, val)
-    img = img.resize((new_w, new_h), Image.LANCZOS)
+    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
     ext = os.path.splitext(out)[1].lstrip(".")
     _save_img(img, out, ext, 90)
     if progress_cb: progress_cb(1.0)
@@ -615,11 +608,11 @@ def _resize_single(src: str, out: str, mode: str, val: float, progress_cb=None) 
 
 
 def _resize_batch(paths: list, out_dir: str, mode: str, val: float, progress_cb=None) -> str:
-    Image = _pil()
+    
     for i, src in enumerate(paths):
         img = Image.open(src)
         new_w, new_h = _calc_size(img.width, img.height, mode, val)
-        img = img.resize((new_w, new_h), Image.LANCZOS)
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         stem = os.path.splitext(os.path.basename(src))[0]
         ext = os.path.splitext(src)[1].lstrip(".")
         out = os.path.join(out_dir, stem + "_resized." + ext)
@@ -631,7 +624,7 @@ def _resize_batch(paths: list, out_dir: str, mode: str, val: float, progress_cb=
 # ── Comprimir ─────────────────────────────────────────────────────────────────
 
 def _compress_single(src: str, out: str, quality: int, progress_cb=None) -> str:
-    Image = _pil()
+    
     img = Image.open(src)
     ext = os.path.splitext(out)[1].lstrip(".")
     _save_img(img, out, ext, quality)
@@ -642,7 +635,7 @@ def _compress_single(src: str, out: str, quality: int, progress_cb=None) -> str:
 
 
 def _compress_batch(paths: list, out_dir: str, quality: int, progress_cb=None) -> str:
-    Image = _pil()
+    
     total_saved = 0
     for i, src in enumerate(paths):
         img = Image.open(src)
@@ -666,7 +659,10 @@ PAGE_SIZES = {
 
 
 def _images_to_pdf(paths: list, output: str, page_size_name: str, progress_cb=None) -> str:
-    Image = _pil()
+    from reportlab.lib.pagesizes import portrait
+    from reportlab.pdfgen import canvas as rl_canvas
+    from pypdf import PdfReader
+    
     try:
         from pypdf import PdfWriter
         import io
@@ -686,31 +682,22 @@ def _images_to_pdf(paths: list, output: str, page_size_name: str, progress_cb=No
             scale = min(pw / img.width, ph / img.height)
             new_w = int(img.width * scale)
             new_h = int(img.height * scale)
-            img = img.resize((new_w, new_h), Image.LANCZOS)
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
-        # Convertir imagen a PDF en memoria usando reportlab
-        try:
-            from reportlab.lib.pagesizes import portrait
-            from reportlab.pdfgen import canvas as rl_canvas
-            import io as _io
-        except ImportError:
-            raise RuntimeError("Instala reportlab: pip install reportlab")
-
-        buf = _io.BytesIO()
+        buf = io.BytesIO()
         c = rl_canvas.Canvas(buf, pagesize=(pw, ph))
-        img_buf = _io.BytesIO()
+        img_buf = io.BytesIO()
         img.save(img_buf, format="JPEG", quality=92)
         img_buf.seek(0)
 
         # Centrar imagen en la página
         x_off = (pw - img.width) / 2
         y_off = (ph - img.height) / 2
-        c.drawImage(_io.BytesIO(img_buf.getvalue()), x_off, y_off,
+        c.drawImage(io.BytesIO(img_buf.getvalue()), x_off, y_off,
                     width=img.width, height=img.height)
         c.save()
         buf.seek(0)
-
-        from pypdf import PdfReader
+        
         page_reader = PdfReader(buf)
         writer.add_page(page_reader.pages[0])
         if progress_cb: progress_cb((i + 1) / len(paths))
@@ -739,8 +726,6 @@ def _pdf_to_images(path: str, out_dir: str, fmt: str, dpi: int, progress_cb=None
 
     # 2. Pasamos la ruta explícita a la función
     pages = convert_from_path(path, dpi=dpi, poppler_path=poppler_bin)
-
-    Image = _pil()
 
     for i, page in enumerate(pages):
         out = os.path.join(out_dir, f"{stem}_p{i + 1:04d}.{fmt}")

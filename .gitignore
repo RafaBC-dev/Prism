@@ -21,3 +21,16 @@ config.json
 # pero si los guardas en el proyecto, ignóralos aquí)
 models/
 .cache/
+
+# --- Carpetas de Compilación y Empaquetado ---
+nuitka_output/
+installer_output/
+build/
+dist/
+*.spec
+
+# --- Basura de crasheos y temporales ---
+nuitka-crash-report.xml
+*.temp.pdf
+concat_list.txt
+palette.png

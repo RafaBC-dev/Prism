@@ -6,6 +6,7 @@ import os
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from pypdf import PdfReader, PdfWriter
+import zipfile
 
 from modules.base_module import (
     BaseModule, BG_DARK, BG_CARD, BG_ITEM,
@@ -283,7 +284,7 @@ class CompressPanel(_BasePdfPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths: messagebox.showwarning("Sin archivo", "Añade un PDF."); return
 
         q_map = {"Alta (90)": 90, "Media (72)": 72, "Baja (50)": 50}
         q_val = q_map.get(self._quality.get(), 72)
@@ -403,11 +404,7 @@ def _rotate_pages(path, angle, pages_str, output, progress_cb=None):
 
 
 def _compress_pdf(path: str, out: str, quality: int = 72, progress_cb=None) -> str:
-    from pypdf import PdfReader, PdfWriter
-    from pypdf.generic import NameObject, NumberObject
-    import io
     from PIL import Image
-    import os
 
     reader = PdfReader(path)
     writer = PdfWriter()
@@ -419,7 +416,7 @@ def _compress_pdf(path: str, out: str, quality: int = 72, progress_cb=None) -> s
             for obj in xobj:
                 if xobj[obj]["/Subtype"] == "/Image":
                     try:
-                        img_data = xobj[obj]._data
+                        img_data = xobj[obj].get_data()
                         img = Image.open(io.BytesIO(img_data))
 
                         # JPEGs no soportan transparencia ni paletas, forzamos RGB puro
@@ -559,7 +556,6 @@ class ZipPanel(ctk.CTkFrame):
 
 
 def _create_zip(paths: list, output: str, compression_level: int, progress_cb=None) -> str:
-    import zipfile
     total_size = sum(os.path.getsize(p) for p in paths if os.path.exists(p))
     done_size = 0
 

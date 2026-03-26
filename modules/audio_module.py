@@ -4,13 +4,10 @@ Backend: pydub (siempre) + FFmpeg si está disponible (más formatos y velocidad
 """
 
 import os
-import whisper
-import torch
 import sys
 import subprocess
 import customtkinter as ctk
 from tkinter import messagebox, filedialog
-from PIL import Image
 
 # Importamos las bases y constantes del proyecto
 from modules.base_module import (
@@ -156,6 +153,7 @@ class TranscriptionPanel(_BaseAudioPanel):
     description = "Usa Whisper para convertir grabaciones a texto con alta precisión."
 
     def _build_options(self):
+        import torch
         f = self._section("Configuración de IA")
         status = "GPU Acelerada (CUDA)" if torch.cuda.is_available() else "Modo CPU (Estándar)"
         ctk.CTkLabel(f, text=f"Hardware detectado: {status}", font=("Segoe UI", 11), text_color=TEXT_SEC).grid(
@@ -219,20 +217,24 @@ class CutPanel(_BaseAudioPanel):
 
     def _build_options(self):
         f = self._section("Fragmento a extraer")
-        f.columnconfigure(1, weight=1)
+        
+        # Agrupamos los elementos en un frame transparente para que se peguen a la izquierda
+        opts = ctk.CTkFrame(f, fg_color="transparent")
+        opts.grid(row=1, column=0, padx=14, pady=(5, 15), sticky="w")
 
-        ctk.CTkLabel(f, text="Inicio (mm:ss):", font=("Segoe UI", 12),
-                     text_color=TEXT_PRI).grid(row=1, column=0, padx=14, pady=(0, 8), sticky="w")
-        self._start = ctk.CTkEntry(f, width=90, height=32,
+        ctk.CTkLabel(opts, text="Inicio (mm:ss):", font=("Segoe UI", 12),
+                     text_color=TEXT_PRI).grid(row=0, column=0, pady=5, sticky="w")
+        self._start = ctk.CTkEntry(opts, width=90, height=32,
                                    placeholder_text="0:00", font=("Segoe UI", 12))
-        self._start.grid(row=1, column=1, padx=(4, 14), pady=(0, 8), sticky="w")
+        self._start.grid(row=0, column=1, padx=(15, 0), pady=5, sticky="w")
 
-        ctk.CTkLabel(f, text="Fin (mm:ss):", font=("Segoe UI", 12),
-                     text_color=TEXT_PRI).grid(row=2, column=0, padx=14, pady=(0, 12), sticky="w")
-        self._end = ctk.CTkEntry(f, width=90, height=32,
+        ctk.CTkLabel(opts, text="Fin (mm:ss):", font=("Segoe UI", 12),
+                     text_color=TEXT_PRI).grid(row=1, column=0, pady=5, sticky="w")
+        self._end = ctk.CTkEntry(opts, width=90, height=32,
                                  placeholder_text="1:30", font=("Segoe UI", 12))
-        self._end.grid(row=2, column=1, padx=(4, 14), pady=(0, 12), sticky="w")
+        self._end.grid(row=1, column=1, padx=(15, 0), pady=5, sticky="w")
 
+        # El indicador de FFmpeg lo ponemos debajo del grupo
         self._backend_info(row=4)
 
     def _run(self):
@@ -519,6 +521,8 @@ class AudioModule(BaseModule):
 
 def _ai_transcribe_task(input_path: str, output_path: str, model_type="small", progress_cb=None):
     """Tarea de transcripción con limpieza de memoria garantizada."""
+    import torch
+    import whisper
     model = None
     try:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -551,22 +555,6 @@ def _ai_transcribe_task(input_path: str, output_path: str, model_type="small", p
             
         import gc
         gc.collect() # Liberación forzada de RAM
-    
-
-def _extract_audio_task(input_path: str, output_path: str, progress_cb=None):
-    """Extrae el audio de un vídeo usando FFmpeg."""
-    try:
-        import subprocess
-        # Comando para extraer audio sin recodificar (copia el flujo original)
-        cmd = [
-            'ffmpeg', '-i', input_path, '-vn', '-acodec', 'libmp3lame', 
-            '-q:a', '2', output_path, '-y'
-        ]
-        subprocess.run(cmd, check=True, capture_output=True)
-        return output_path
-    except Exception as e:
-        return f"Error FFmpeg: {str(e)}"
-
 
 def _parse_time(s: str) -> int:
     """'mm:ss' o 'hh:mm:ss' → milisegundos."""
@@ -633,9 +621,9 @@ def _cut_audio(path: str, out: str, start_ms: int, end_ms: int,
             s = ms // 1000
             return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
         _run_ffmpeg([
-            "-i", path,
             "-ss", ms_to_ts(start_ms),
             "-to", ms_to_ts(end_ms),
+            "-i", path,
             "-c", "copy",
             out,
         ])
@@ -666,7 +654,6 @@ def _merge_audio(paths: list, out: str, fmt: str,
             _run_ffmpeg([
                 "-f", "concat", "-safe", "0",
                 "-i", list_file,
-                "-c", "copy",
                 out,
             ])
         finally:

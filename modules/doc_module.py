@@ -3,10 +3,10 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import subprocess
 import shutil
-import mammoth
-import pytesseract
 from PIL import Image
+import pytesseract
 from docx import Document
+import fitz
 from modules.base_module import (
     BaseModule, BG_DARK, BG_CARD, BG_ITEM,
     ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER
@@ -65,12 +65,11 @@ class DocsModule(BaseModule):
         self._tool_btns[tool_id].configure(fg_color=BG_ITEM, text_color=TEXT_PRI)
 
     def receive_files(self, paths):
-        docs = [p for p in paths if os.path.splitext(p)[1].lower() in DOC_EXTS]
-        if not docs:
-            return
         panel = self._panels.get(self._active_tool)
-        if panel and hasattr(panel, "_file_list"):
-            panel._file_list.add_files(docs)
+        if panel and hasattr(panel, "allowed_exts"):
+            docs = [p for p in paths if os.path.splitext(p)[1].lower() in panel.allowed_exts]
+            if docs:
+                panel._file_list.add_files(docs)
 
     def _build_panels(self):
         """Asocia cada ID de herramienta con su clase de panel correspondiente."""
@@ -182,6 +181,7 @@ class ReplacePanel(_BaseDocPanel):
     title = "Buscar y Reemplazar"
     description = "Modifica el contenido de varios archivos simultáneamente."
     multi_file = True
+    allowed_exts = [".docx", ".txt", ".md", ".json", ".xml", ".config", ".ini", ".csv", ".py", ".c", ".cpp"]
 
     def _build_options(self):
         f = self._section("Parámetros de sustitución")
@@ -269,101 +269,6 @@ class ExtractTextPanel(_BaseDocPanel):
             
         return output_path
 
-def _extract_text(path):
-    ext = os.path.splitext(path)[1].lower()
-    if ext == ".docx":
-        try:
-            from docx import Document
-            return "\n".join(p.text for p in Document(path).paragraphs)
-        except ImportError:
-            raise RuntimeError("Instala python-docx: pip install python-docx")
-    elif ext in (".txt", ".md", ".rtf"):
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
-    raise ValueError(f"Formato no soportado: {ext}")
-
-def _convert_to_pdf(path, out_dir, backend, progress_cb=None):
-    import subprocess
-    stem = os.path.splitext(os.path.basename(path))[0]
-    out_path = os.path.join(out_dir, stem + ".pdf")
-    if backend and backend.libreoffice:
-        r = subprocess.run([backend.libreoffice_cmd, "--headless", "--convert-to", "pdf",
-                            "--outdir", out_dir, path],
-                           capture_output=True, text=True, timeout=60)
-        if r.returncode == 0:
-            if progress_cb: progress_cb(1.0)
-            return out_path
-    ext = os.path.splitext(path)[1].lower()
-    text = _extract_text(path) if ext == ".docx" else open(path, encoding="utf-8", errors="replace").read()
-    try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.lib.units import cm
-    except ImportError:
-        raise RuntimeError("Instala reportlab: pip install reportlab")
-    doc = SimpleDocTemplate(out_path, pagesize=A4,
-                            leftMargin=2.5*cm, rightMargin=2.5*cm,
-                            topMargin=2.5*cm, bottomMargin=2.5*cm)
-    styles = getSampleStyleSheet()
-    style_normal = styles["Normal"]
-    style_normal.wordWrap = 'CJK'
-
-    story = []
-    for line in text.split("\n"):
-        story.append(Paragraph(line, style_normal) if line.strip() else Spacer(1, 6))
-    doc.build(story)
-    if progress_cb: progress_cb(1.0)
-    return out_path
-
-def _docx_to_md(path, output, progress_cb=None):
-    try:
-        from docx import Document
-    except ImportError:
-        raise RuntimeError("Instala python-docx: pip install python-docx")
-    doc = Document(path)
-    lines = []
-    for para in doc.paragraphs:
-        style = para.style.name.lower()
-        text = para.text
-        if not text.strip(): lines.append(""); continue
-        if "heading 1" in style: lines.append(f"# {text}")
-        elif "heading 2" in style: lines.append(f"## {text}")
-        elif "heading 3" in style: lines.append(f"### {text}")
-        elif "list" in style: lines.append(f"- {text}")
-        else: lines.append(text)
-    with open(output, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
-    if progress_cb: progress_cb(1.0)
-    return output
-
-def _doc_to_txt(path, output, encoding, progress_cb=None):
-    text = _extract_text(path)
-    with open(output, "w", encoding=encoding, errors="replace") as f:
-        f.write(text)
-    if progress_cb: progress_cb(1.0)
-    return output
-
-def _merge_docx(paths, output, progress_cb=None):
-    try:
-        from docx import Document
-        from docxcompose.composer import Composer
-    except ImportError:
-        raise RuntimeError("Instala docxcompose: pip install docxcompose")
-
-    # El primer documento es la base (conserva sus estilos globales)
-    master = Document(paths[0])
-    composer = Composer(master)
-
-    for i in range(1, len(paths)):
-        doc = Document(paths[i])
-        composer.append(doc)
-        if progress_cb: progress_cb((i + 1) / len(paths))
-
-    composer.save(output)
-    if progress_cb: progress_cb(1.0)
-    return output
-
 def _convert_to_pdf_task(input_path: str, output_path: str, progress_cb=None):
     """Convierte DOCX a PDF priorizando motores nativos para mantener el diseño."""
     ext = os.path.splitext(input_path)[1].lower()
@@ -391,91 +296,126 @@ def _convert_to_pdf_task(input_path: str, output_path: str, progress_cb=None):
             return f"Convertido con LibreOffice:\n{output_path}"
 
         # --- PLAN C: Motor Básico de Python (Solo texto, sin diseño) ---
-        if ext == ".docx":
-            from docx import Document
+        if ext in [".docx", ".txt", ".md"]:
             from fpdf import FPDF
-            
-            doc = Document(input_path)
             pdf = FPDF()
             pdf.add_page()
             pdf.set_font("Helvetica", size=11)
-            
-            for para in doc.paragraphs:
-                text = para.text.encode('latin-1', 'replace').decode('latin-1')
-                if text.strip():
-                    pdf.multi_cell(0, 6, text)
-                    
+
+            if ext == ".docx":
+                doc = Document(input_path)
+                lines = [p.text for p in doc.paragraphs]
+            else:
+                with open(input_path, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+
+            for text in lines:
+                clean_text = text.encode('latin-1', 'replace').decode('latin-1').strip()
+                if clean_text:
+                    pdf.multi_cell(0, 6, clean_text)
+
             pdf.output(output_path)
-            
-            # El mensaje de la "UX Honesta"
-            return (f"Convertido (Motor Básico de Texto):\n{output_path}\n\n"
-                    f"⚠ Aviso: Para mantener el diseño, tablas e imágenes originales, "
-                    f"instala Microsoft Word o LibreOffice (Gratis).")
+            return f"Convertido (Motor Básico):\n{output_path}"
         else:
             return "Formato no soportado por el motor básico. Requiere LibreOffice."
-
+        
     except Exception as e:
         return f"Error en la conversión: {str(e)}"
 
 def _batch_replace_task(paths: list, out_dir: str, search_text: str, replace_text: str, progress_cb=None):
-    """Busca y reemplaza texto en múltiples archivos .docx."""
+    """Busca y reemplaza texto en múltiples archivos (.docx y texto plano)."""
     count = 0
+    errores = []
+    
+    # Definimos qué extensiones se leen como texto plano ultrarrápido
+    TEXT_EXTS = [".txt", ".md", ".json", ".xml", ".config", ".ini", ".csv", ".py", ".c", ".cpp"]
+
     for i, src in enumerate(paths):
         try:
-            doc = Document(src)
-            found_in_doc = False
-            
-            # 1. Buscar en Párrafos
-            for p in doc.paragraphs:
-                if search_text in p.text:
-                    p.text = p.text.replace(search_text, replace_text)
-                    found_in_doc = True
-            
-            # 2. Buscar en Tablas
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        for p in cell.paragraphs:
-                            if search_text in p.text:
-                                p.text = p.text.replace(search_text, replace_text)
-                                found_in_doc = True
-            
-            # Guardar solo si se hicieron cambios o para marcar procesado
+            ext = os.path.splitext(src)[1].lower()
             stem = os.path.splitext(os.path.basename(src))[0]
-            out = os.path.join(out_dir, f"{stem}_modificado.docx")
-            doc.save(out)
-            count += 1
             
+            # --- RUTA A: Archivos DOCX (Word) ---
+            if ext == ".docx":
+                doc = Document(src)
+                modificado = False
+                
+                # Buscar en Párrafos y Tablas conservando el formato visual
+                for p in doc.paragraphs:
+                    for run in p.runs:
+                        if search_text in run.text:
+                            run.text = run.text.replace(search_text, replace_text)
+                            modificado = True
+                            
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            for p in cell.paragraphs:
+                                for run in p.runs:
+                                    if search_text in run.text:
+                                        run.text = run.text.replace(search_text, replace_text)
+                                        modificado = True
+                                        
+                if modificado:
+                    out = os.path.join(out_dir, f"{stem}_modificado.docx")
+                    doc.save(out)
+                    count += 1
+                    
+            # --- RUTA B: Archivos de Texto Plano y Código ---
+            elif ext in TEXT_EXTS:
+                # Usamos UTF-8 para evitar problemas con tildes o caracteres de código
+                with open(src, "r", encoding="utf-8", errors="ignore") as f:
+                    contenido = f.read()
+                    
+                if search_text in contenido:
+                    nuevo_contenido = contenido.replace(search_text, replace_text)
+                    out = os.path.join(out_dir, f"{stem}_modificado{ext}")
+                    
+                    with open(out, "w", encoding="utf-8") as f:
+                        f.write(nuevo_contenido)
+                    count += 1
+            else:
+                errores.append(f"{os.path.basename(src)}: Formato {ext} no soportado para reemplazar.")
+
         except Exception as e:
-            print(f"Error procesando {src}: {e}")
+            errores.append(f"{os.path.basename(src)}: {str(e)}")
             
-        if progress_cb:
-            progress_cb((i + 1) / len(paths))
-            
+        if progress_cb: progress_cb((i + 1) / len(paths))
+        
+    # --- RESULTADO ---
+    if errores:
+        return f"Proceso finalizado con errores.\nModificados: {count}\nFallos:\n" + "\n".join(errores)
     return f"Proceso finalizado.\n{count} archivos generados en:\n{out_dir}"
     
 def _merge_all_task(paths: list, output_path: str, target_fmt: str, progress_cb=None):
     """Combina múltiples formatos (PDF, DOCX, TXT, MD) en un único archivo de salida."""
     try:
-        # --- CASO A: EL RESULTADO ES UN PDF ---
+       # --- CASO A: EL RESULTADO ES UN PDF ---
         if target_fmt == "pdf":
             from pypdf import PdfWriter
             writer = PdfWriter()
+            temp_files = [] # Creamos una lista para la "basura"
             
             for i, p in enumerate(paths):
                 ext = os.path.splitext(p)[1].lower()
                 if ext == ".pdf":
                     writer.append(p)
                 else:
-                    # Convertimos temporalmente a PDF (usando la lógica que ya tenemos)
+                    # Convertimos temporalmente a PDF
                     temp_pdf = p + ".temp.pdf"
                     _convert_to_pdf_task(p, temp_pdf)
                     writer.append(temp_pdf)
-                    if os.path.exists(temp_pdf): os.remove(temp_pdf)
+                    temp_files.append(temp_pdf) # Apuntamos para borrar luego
                 if progress_cb: progress_cb((i+1)/len(paths))
             
+            # 1º: Escribimos el archivo final en el disco
             with open(output_path, "wb") as f:
                 writer.write(f)
+                
+            # 2º: AHORA borramos los temporales de forma segura
+            for tmp in temp_files:
+                if os.path.exists(tmp): os.remove(tmp)
+
         # --- CASO B: EL RESULTADO ES DOCX / MD / TXT ---
         else:
             merged_text = []
@@ -484,11 +424,9 @@ def _merge_all_task(paths: list, output_path: str, target_fmt: str, progress_cb=
                 text = ""
                 
                 if ext == ".pdf":
-                    import fitz
                     doc = fitz.open(p)
                     text = "\n".join([page.get_text() for page in doc])
                 elif ext == ".docx":
-                    from docx import Document
                     doc = Document(p)
                     text = "\n".join([para.text for para in doc.paragraphs])
                 else: # TXT / MD
@@ -499,7 +437,6 @@ def _merge_all_task(paths: list, output_path: str, target_fmt: str, progress_cb=
                 if progress_cb: progress_cb((i+1)/len(paths))
             final_content = "\n\n".join(merged_text)
             if target_fmt == "docx":
-                from docx import Document
                 new_doc = Document()
                 new_doc.add_paragraph(final_content)
                 new_doc.save(output_path)
@@ -519,7 +456,7 @@ def _get_text_universal(path):
     text = ""
 
     if ext == ".pdf":
-        import fitz
+
         doc = fitz.open(path)
         # 1. Intento digital (rápido)
         text = "\n".join([page.get_text() for page in doc])
@@ -542,7 +479,6 @@ def _get_text_universal(path):
         text = pytesseract.image_to_string(Image.open(path), lang='spa')
     
     elif ext == ".docx":
-        from docx import Document
         doc = Document(path)
         text = "\n".join([p.text for p in doc.paragraphs])
     
@@ -551,4 +487,3 @@ def _get_text_universal(path):
             text = f.read()
             
     return text
-
