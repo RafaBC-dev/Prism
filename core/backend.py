@@ -23,7 +23,8 @@ class BackendStatus:
 
 def _run(cmd: list[str]) -> str:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=5, creationflags=cf)
         return (r.stdout + r.stderr).strip()
     except Exception:
         return ""

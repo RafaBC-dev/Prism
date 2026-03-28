@@ -1,26 +1,44 @@
+; =============================================================================
+; setup_prism.iss — Prism Installer Script (Inno Setup)
+; Empaqueta la carpeta dist\Prism\ generada por build.ps1
+; =============================================================================
+
 [Setup]
 AppName=Prism
 AppVersion=1.0
+AppPublisher=RafaBC-dev
+AppPublisherURL=https://github.com/RafaBC-dev/Prism
 DefaultDirName={autopf}\Prism
 DefaultGroupName=Prism
-UninstallDisplayIcon={app}\Prism.exe
+UninstallDisplayIcon={app}\icon.ico
 Compression=lzma2
 SolidCompression=yes
-OutputDir=.\installer_output
+OutputDir=C:\Users\rafae\Desktop\Prism\installer_output
 OutputBaseFilename=Prism_v1.0_Setup
 SetupIconFile=C:\Users\rafae\Desktop\Prism\icon.ico
+; Requiere Windows 10 o superior (necesario para Python 3.11)
+MinVersion=10.0
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]
-; 1. El ejecutable y las librerías que generó PyInstaller
-Source: "C:\Users\rafae\Desktop\Prism\dist\Prism\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
+; Toda la carpeta distribuible (Python embebido + app + herramientas)
+Source: "C:\Users\rafae\Desktop\Prism\dist\Prism\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; 2. Los binarios externos que Prism necesita para funcionar
-Source: "C:\Users\rafae\Desktop\Prism\ffmpeg\*"; DestDir: "{app}\ffmpeg"; Flags: ignoreversion recursesubdirs
-Source: "C:\Users\rafae\Desktop\Prism\poppler\*"; DestDir: "{app}\poppler"; Flags: ignoreversion recursesubdirs
+; Instalar el modelo Whisper en la cache del usuario
+Source: "C:\Users\rafae\Desktop\Prism\dist\Prism\small.pt"; DestDir: "{%USERPROFILE}\.cache\whisper"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Prism"; Filename: "{app}\Prism.exe"
-Name: "{commondesktop}\Prism"; Filename: "{app}\Prism.exe"
+; Acceso directo en el menú inicio
+Name: "{group}\Prism"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"
+
+; Acceso directo en el escritorio
+Name: "{commondesktop}\Prism"; Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"
 
 [Run]
-Filename: "{app}\Prism.exe"; Description: "Lanzar Prism ahora"; Flags: nowait postinstall skipifsilent
+; Ofrecer lanzar la app al terminar de instalar
+Filename: "{app}\python\pythonw.exe"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; Description: "Lanzar Prism ahora"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Limpiar archivos generados durante el uso de la app
+Type: filesandordirs; Name: "{app}\__pycache__"

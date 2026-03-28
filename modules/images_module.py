@@ -31,30 +31,14 @@ TOOLS = [
 
 # ── Lógica de IA (Motor) ──────────────────────────────────────────────────────
 
-def _get_ai_session():
-    from rembg import new_session
-    """Detecta el mejor hardware disponible (GPU/CPU) para la IA."""
-    providers = ort.get_available_providers()
-    
-    # Prioridad: 1. NVIDIA (CUDA), 2. Windows GPU (DirectML), 3. CPU
-    if 'CUDAExecutionProvider' in providers:
-        sel_provider = ['CUDAExecutionProvider']
-    elif 'DmlExecutionProvider' in providers:
-        sel_provider = ['DmlExecutionProvider']
-    else:
-        sel_provider = ['CPUExecutionProvider']
-        
-    return new_session("u2net", providers=sel_provider)
-
 def _ai_remove_bg_task(input_path: str, output_path: str, progress_cb=None):
     from rembg import remove
     """Tarea principal de eliminación de fondo para la cola de trabajos."""
     try:
-        session = _get_ai_session()
         with open(input_path, 'rb') as i:
             input_data = i.read()
-            # Proceso de IA
-            output_data = remove(input_data, session=session)     
+            # Proceso de IA automático (rembg ya elige el mejor provider)
+            output_data = remove(input_data)     
         with open(output_path, 'wb') as o:
             o.write(output_data)
         return output_path
@@ -173,9 +157,12 @@ class RemoveBgPanel(_BaseImgPanel):
 
     def _build_options(self):
         f = self._section("Motor de IA")
-        ctk.CTkLabel(f, text="Aceleración: Automática (GPU activa)", 
+        ctk.CTkLabel(f, text="Aceleración: Automática (Selección del sistema)", 
                      font=("Segoe UI", 11), text_color=TEXT_SEC).grid(
-                     row=1, column=0, padx=14, pady=(0, 12), sticky="w")
+                     row=1, column=0, padx=14, pady=(0, 2), sticky="w")
+        ctk.CTkLabel(f, text="(La 1ª vez descargará los modelos de IA localmente. Puede tardar varios minutos)", 
+                     font=("Segoe UI", 10), text_color=ACCENT).grid(
+                     row=2, column=0, padx=14, pady=(0, 12), sticky="w")
 
     def _run(self):
         paths = self._file_list.paths
@@ -661,6 +648,7 @@ PAGE_SIZES = {
 def _images_to_pdf(paths: list, output: str, page_size_name: str, progress_cb=None) -> str:
     from reportlab.lib.pagesizes import portrait
     from reportlab.pdfgen import canvas as rl_canvas
+    from reportlab.lib.utils import ImageReader  # <-- ESTO ERA LO QUE FALTABA
     from pypdf import PdfReader
     
     try:
@@ -678,10 +666,8 @@ def _images_to_pdf(paths: list, output: str, page_size_name: str, progress_cb=No
             pw, ph = img.width, img.height
         else:
             pw, ph = PAGE_SIZES.get(page_size_name, (595, 842))
-            # Escalar imagen para que quepa en la página manteniendo proporción
             scale = min(pw / img.width, ph / img.height)
-            new_w = int(img.width * scale)
-            new_h = int(img.height * scale)
+            new_w, new_h = int(img.width * scale), int(img.height * scale)
             img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
         buf = io.BytesIO()
@@ -690,11 +676,12 @@ def _images_to_pdf(paths: list, output: str, page_size_name: str, progress_cb=No
         img.save(img_buf, format="JPEG", quality=92)
         img_buf.seek(0)
 
-        # Centrar imagen en la página
-        x_off = (pw - img.width) / 2
-        y_off = (ph - img.height) / 2
-        c.drawImage(io.BytesIO(img_buf.getvalue()), x_off, y_off,
-                    width=img.width, height=img.height)
+        x_off, y_off = (pw - img.width) / 2, (ph - img.height) / 2
+        
+        # Envolvemos el BytesIO en un ImageReader para que ReportLab no se queje
+        img_reader = ImageReader(img_buf)
+        c.drawImage(img_reader, x_off, y_off, width=img.width, height=img.height)
+        
         c.save()
         buf.seek(0)
         
@@ -709,38 +696,48 @@ def _images_to_pdf(paths: list, output: str, page_size_name: str, progress_cb=No
 
 # ── PDF → Imágenes ────────────────────────────────────────────────────────────
 
-def _get_poppler_path() -> str:
-    return r"C:\poppler\poppler-25.12.0\Library\bin"
-
-
 def _pdf_to_images(path: str, out_dir: str, fmt: str, dpi: int, progress_cb=None) -> str:
+    """Convierte PDF a imágenes usando PyMuPDF (nativo, rápido, sin Poppler)."""
+    import fitz  # PyMuPDF
+    import io
+    from PIL import Image
+
     try:
-        from pdf2image import convert_from_path
-    except ImportError:
-        return _pdf_to_images_fallback(path, out_dir, fmt, dpi, progress_cb)
+        stem = os.path.splitext(os.path.basename(path))[0]
+        # Abrimos el PDF directamente (a fitz le dan igual las tildes en la ruta)
+        doc = fitz.open(path)
+        
+        # El DPI estándar de PDF es 72. Calculamos el factor de zoom.
+        # DPI 72 = Zoom 1.0 | DPI 150 = Zoom ~2.08 | DPI 300 = Zoom ~4.16
+        zoom = dpi / 72.0
+        mat = fitz.Matrix(zoom, zoom)
+        
+        total_pages = len(doc)
+        
+        for i in range(total_pages):
+            page = doc.load_page(i)
+            # Renderizamos la página a una imagen cruda (pixmap) con el zoom aplicado
+            pix = page.get_pixmap(matrix=mat)
+            
+            # Definimos la ruta de salida
+            out_path = os.path.join(out_dir, f"{stem}_p{i + 1:04d}.{fmt}")
+            
+            # Convertimos el pixmap a bytes PNG (formato intermedio sin pérdida)
+            img_data = pix.tobytes("png")
+            
+            # Usamos PIL para abrir esos bytes y guardarlo con tu formateador estándar (_save_img)
+            # Esto asegura que se aplique la compresión/calidad que eligió el usuario en la interfaz.
+            with Image.open(io.BytesIO(img_data)) as img:
+                # _save_img es tu función auxiliar que ya maneja JPG/PNG/WEBP
+                _save_img(img, out_path, fmt, 92)
+            
+            # Actualizamos progreso
+            if progress_cb: progress_cb((i + 1) / total_pages)
+            
+        doc.close()
+        return f"Conversión exitosa.\n{total_pages} imágenes guardadas en:\n{out_dir}"
+        
+    except Exception as e:
+        return f"Error crítico en la conversión de PDF: {str(e)}"
 
-    stem = os.path.splitext(os.path.basename(path))[0]
-
-    # 1. Obtenemos la ruta dinámica
-    poppler_bin = _get_poppler_path()
-
-    # 2. Pasamos la ruta explícita a la función
-    pages = convert_from_path(path, dpi=dpi, poppler_path=poppler_bin)
-
-    for i, page in enumerate(pages):
-        out = os.path.join(out_dir, f"{stem}_p{i + 1:04d}.{fmt}")
-        _save_img(page, out, fmt, 92)
-        if progress_cb: progress_cb((i + 1) / len(pages))
-
-    return f"{len(pages)} imágenes en:\n{out_dir}"
-
-
-def _pdf_to_images_fallback(path: str, out_dir: str, fmt: str, dpi: int, progress_cb=None) -> str:
-    """Fallback usando pypdf para extraer páginas como imágenes (requiere poppler o Ghostscript)."""
-    raise RuntimeError(
-        "Para exportar PDF a imágenes instala pdf2image y poppler:\n"
-        "  pip install pdf2image\n"
-        "  Windows: descarga poppler desde https://github.com/oschwartz10612/poppler-windows/releases\n"
-        "  y añade la carpeta bin/ al PATH."
-    )
 

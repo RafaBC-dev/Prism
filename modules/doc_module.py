@@ -288,7 +288,8 @@ def _convert_to_pdf_task(input_path: str, output_path: str, progress_cb=None):
         if os.path.exists(soffice_path):
             out_dir = os.path.dirname(output_path)
             cmd = [soffice_path, "--headless", "--convert-to", "pdf", "--outdir", out_dir, input_path]
-            subprocess.run(cmd, check=True, capture_output=True)
+            cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+            subprocess.run(cmd, check=True, capture_output=True, creationflags=cf)
             
             lo_output = os.path.join(out_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pdf")
             if lo_output != output_path and os.path.exists(lo_output):

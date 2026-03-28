@@ -23,7 +23,6 @@ VIDEO_EXTS = [".mp4", ".mkv", ".avi", ".mov", ".flv", ".wmv"]
 
 TOOLS = [
     ("transcribe", "✍️", "Transcribir (IA)"),
-    ("splitter",   "🧠", "Separar Pistas (IA)"),
     ("extract",    "🎵", "Extraer de Vídeo"),
     ("convert",    "🔄", "Convertir Formato"),
     ("cut",        "✂️", "Cortar Audio"),
@@ -416,29 +415,6 @@ class ExtractAudioPanel(_BaseAudioPanel):
             on_done=self._on_done,
         )
 
-class AudioSplitterPanel(_BaseAudioPanel):
-    title = "Separador de Pistas IA"
-    description = "Extrae Voz, Batería, Bajo e Instrumentos con calidad de estudio."
-    
-    def _build_options(self):
-        f = self._section("Configuración de Calidad")
-        info = ("Prism usará el modelo Demucs para desglosar la canción.\n"
-                "• El proceso puede tardar 2-4 minutos según tu CPU/GPU.\n"
-                "• Se generarán 4 archivos independientes.")
-        ctk.CTkLabel(f, text=info, font=("Segoe UI", 11), text_color=TEXT_SEC, justify="left").grid(row=1, column=0, padx=14, pady=(0,15))
-
-    def _run(self):
-        path = self._file_list.paths[0] if self._file_list.paths else None
-        if not path: return
-        
-        out_dir = filedialog.askdirectory(title="Selecciona carpeta para las pistas")
-        if not out_dir: return
-
-        self.app.job_queue.submit(
-            f"IA Separando: {os.path.basename(path)}",
-            _audio_split_task, path, out_dir,
-            on_done=self._on_done
-        )
 
 # ── Módulo Principal ──────────────────────────────────────────────────────────
 
@@ -500,7 +476,6 @@ class AudioModule(BaseModule):
     def _build_panels(self):
         builders = {
             "transcribe": TranscriptionPanel,
-            "splitter":   AudioSplitterPanel,
             "extract":    ExtractAudioPanel,
             "convert":    ConvertAudioPanel,
             "cut":        CutPanel,
@@ -572,14 +547,26 @@ def _has_ffmpeg(backend) -> bool:
 
 
 def _run_ffmpeg(args: list, timeout: int = 300) -> None:
+    """Ejecuta FFmpeg de forma totalmente invisible en Windows."""
+    import subprocess
+    import os
+    
+    # Bandera mágica de Windows para ocultar la consola del subproceso
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+    
+    # Ejecutamos FFmpeg
     result = subprocess.run(
         ["ffmpeg", "-y"] + args,
-        capture_output=True, text=True, timeout=timeout,
+        capture_output=True, # Capturamos la salida para que no salga en terminal
+        text=True,
+        timeout=timeout,
+        creationflags=creationflags 
     )
+    
+    # Si falla, lanzamos el error con los últimos detalles
     if result.returncode != 0:
-        raise RuntimeError(result.stderr[-500:] if result.stderr else "FFmpeg falló")
-
-
+        raise RuntimeError(result.stderr[-500:] if result.stderr else "FFmpeg falló en silencio.")
+    
 # ══════════════════════════════════════════════════════════════════════════════
 # Funciones de operación (hilo separado, reciben progress_cb)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -724,24 +711,3 @@ def _extract_audio_from_video(paths: list, out_dir: str, fmt: str, bitrate: str,
             progress_cb((i + 1) / total)
 
     return f"{len(created)} archivo(s) en:\n{out_dir}"
-
-def _audio_split_task(input_path: str, output_dir: str, progress_cb=None):
-    """Motor de IA Demucs para separación de pistas de alta calidad."""
-    try:
-        # Usamos sys.executable -m demucs para asegurar que encuentre el módulo
-        cmd = [
-            sys.executable, "-m", "demucs", 
-            "-o", output_dir, 
-            "--filename", "{track}/{stems}.{ext}", 
-            input_path
-        ]
-        
-        if progress_cb: progress_cb(0.1)
-        
-        # check=True lanzará una excepción si hay un error interno
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
-        if progress_cb: progress_cb(1.0)
-        return f"Separación completada con éxito.\nArchivos guardados en: {output_dir}"
-    except Exception as e:
-        return f"Error en la separación IA: {str(e)}"

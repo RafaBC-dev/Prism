@@ -21,7 +21,6 @@ El proyecto sigue una estructura modular para facilitar la escalabilidad y el ma
 
 ### 🔊 Audio & Inteligencia Artificial
 * **Neural Transcription**: Integración del modelo **OpenAI Whisper** para la conversión de voz a texto con procesamiento local.
-* **Source Separation**: Implementación de **Meta Demucs** para la separación de pistas musicales (Vocals, Drums, Bass, Other) mediante redes neuronales.
 * **Procesamiento de Señal**: Extracción de audio desde contenedores de vídeo, conversión de formatos, recorte temporal y ajuste de ganancia mediante FFmpeg.
 
 ### 🎬 Vídeo & Multimedia
@@ -40,19 +39,32 @@ El funcionamiento óptimo de Prism requiere las siguientes dependencias externas
 * **Python 3.10+**
 * **FFmpeg**: Binarios necesarios para la codificación y manipulación multimedia.
 * **Poppler**: Requerido para la gestión y renderización de archivos PDF.
-* **Hardware**: Se recomienda el uso de una GPU compatible con CUDA para acelerar la ejecución de modelos de IA (Whisper/Demucs).
+* **Hardware**: Se recomienda el uso de una GPU compatible con CUDA para acelerar la ejecución de modelos de IA (Whisper).
 
-## 5. Instalación y Despliegue
+## 5. Instalación y Despliegue (Modo Desarrollo)
 
 1. Clonar el repositorio:
    ```bash
-   git clone [https://github.com/RafaBC-dev/Prism.git](https://github.com/RafaBC-dev/Prism.git)
+   git clone https://github.com/RafaBC-dev/Prism.git
+   ```
 
-2. Instalar dependencias de Python:
-    ```bash
-    pip install -r requirements.txt
+2. Instalar las dependencias de Python en un entorno virtual:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 3. Ejecutar la aplicación:
-    python main.py
+   ```bash
+   python main.py
+   ```
 
-Desarrollado por RafaBC-dev
+## 6. Generación del Instalador (.exe)
+
+Prism ha abandonado la compilación nativa (Nuitka) en favor de una **distribución embebida de Python 3.11** mucho más robusta y rápida. Para empaquetarlo:
+
+1. **Recolección:** Ejecuta el script `build.ps1` en PowerShell. Este descargará automáticamente Python embebido, las herramientas precompiladas FFmpeg y Poppler, resolverá `tkinter`, y clonará todas las librerías necesarias dentro de la carpeta aislada `dist\Prism`.
+2. **Setup:** Abre `setup_prism.iss` usando **Inno Setup 6**.
+3. **Compilar:** Presiona **F9** en Inno Setup. El instalador profesional listo para distribuir se generará en la carpeta `installer_output/`.
+
+---
+*Desarrollado por RafaBC-dev*

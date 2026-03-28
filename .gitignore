@@ -17,10 +17,11 @@ poppler/
 config.json
 *.log
 
-# Modelos de IA (Whisper/Demucs suelen bajar modelos a la carpeta de usuario, 
+# Modelos de IA (Whisper suelen bajar modelos a la carpeta de usuario, 
 # pero si los guardas en el proyecto, ignóralos aquí)
 models/
 .cache/
+*.pt
 
 # --- Carpetas de Compilación y Empaquetado ---
 nuitka_output/

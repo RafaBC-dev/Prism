@@ -62,7 +62,8 @@ class VideoPreviewPanel(ctk.CTkFrame):
     def _get_video_specs(self, path):
         try:
             cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path]
-            raw = subprocess.check_output(cmd, text=True)
+            cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+            raw = subprocess.check_output(cmd, text=True, creationflags=cf)
             data = json.loads(raw)
             
             fmt = data.get("format", {})
@@ -331,8 +332,9 @@ class GifPanel(_BaseVideoPanel):
 
 def _cut_video_task(path, out, start, end, progress_cb=None):
     try:
+        cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         args = ["ffmpeg", "-ss", start, "-to", end, "-i", path, "-c", "copy", "-y", out]
-        subprocess.run(args, check=True, capture_output=True)
+        subprocess.run(args, check=True, capture_output=True, creationflags=cf)
         return out
     except Exception as e:
         return f"Error al recortar: {str(e)}"
@@ -341,13 +343,14 @@ def _join_videos_task(paths, out, progress_cb=None):
     """Une varios vídeos usando un archivo de lista temporal para concat."""
     list_file = "concat_list.txt"
     try:
+        cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         with open(list_file, "w", encoding="utf-8") as f:
             for p in paths:
                 clean_path = p.replace("\\", "/").replace("'", "'\\''")
                 f.write(f"file '{clean_path}'\n")
         
         args = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", "-y", out]
-        subprocess.run(args, check=True, capture_output=True)
+        subprocess.run(args, check=True, capture_output=True, creationflags=cf)
         if os.path.exists(list_file): os.remove(list_file)
         return out
     except Exception as e:
@@ -356,6 +359,7 @@ def _join_videos_task(paths, out, progress_cb=None):
 
 def _video_to_gif_task(path, out, fps, width, start, end, progress_cb=None):
     try:
+        cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
         palette = "palette.png"
         filters = f"fps={fps},scale={width}:-1:flags=lanczos"
         
@@ -364,10 +368,10 @@ def _video_to_gif_task(path, out, fps, width, start, end, progress_cb=None):
         if end: base_cmd += ["-to", end]
         
         cmd_pal = base_cmd + ["-i", path, "-vf", f"{filters},palettegen", "-y", palette]
-        subprocess.run(cmd_pal, check=True, capture_output=True)
+        subprocess.run(cmd_pal, check=True, capture_output=True, creationflags=cf)
         
         cmd_gif = base_cmd + ["-i", path, "-i", palette, "-filter_complex", f"{filters}[x];[x][1:v]paletteuse", "-y", out]
-        subprocess.run(cmd_gif, check=True, capture_output=True)
+        subprocess.run(cmd_gif, check=True, capture_output=True, creationflags=cf)
         
         if os.path.exists(palette): os.remove(palette)
         return out
@@ -388,10 +392,11 @@ def _video_task(input_path: str, output_path: str, mode="convert", params=None, 
             cmd += ["-vf", f"subtitles='{clean_srt}'", "-c:a", "copy"]
 
         cmd += [output_path, "-y"]
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        subprocess.run(cmd, capture_output=True, text=True, check=True, creationflags=cf)
         
         if progress_cb: progress_cb(1.0)
-        return f"Proceso completado:\n{output_path}"
+        return output_path
         
     except Exception as e:
         return f"Error inesperado: {str(e)}"
