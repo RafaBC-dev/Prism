@@ -13,6 +13,8 @@ Dependencias:
 - python-docx (Lectura de parsers MS Word XML)
 - markdown (Para render de MD a HTML)
 """
+import os
+import sys
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import subprocess
@@ -21,9 +23,11 @@ from PIL import Image
 import pytesseract
 from docx import Document
 import fitz
+from pypdf import PdfWriter, PdfReader
 from modules.base_module import (
-    BaseModule, BG_DARK, BG_CARD, BG_ITEM,
-    ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER
+    BaseModule, BasePanel, BG_DARK, BG_CARD, BG_ITEM,
+    ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER,
+    resolve_tool_path
 )
 from core.job_queue import JobStatus
 from ui.widgets import DropZone, FileListWidget
@@ -100,15 +104,14 @@ class DocsModule(BaseModule):
             self._panels[tid] = panel
 
 
-class _BaseDocPanel(ctk.CTkFrame):
+class _BaseDocPanel(BasePanel):
     title = ""
     description = ""
     multi_file = False
     allowed_exts = DOC_EXTS
 
     def __init__(self, master, app, **kwargs):
-        super().__init__(master, fg_color=BG_DARK, corner_radius=0, **kwargs)
-        self.app = app
+        super().__init__(master, app=app, **kwargs)
         self.columnconfigure(0, weight=1)
         self._build_common()
         self._build_options()
@@ -178,7 +181,10 @@ class UniversalMergePanel(_BaseDocPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         
         fmt = self._target_fmt.get().lower()
         out = filedialog.asksaveasfilename(defaultextension=f".{fmt}", 
@@ -186,7 +192,7 @@ class UniversalMergePanel(_BaseDocPanel):
         if not out: return
 
         # Aquí llamaríamos a una función '_merge_all_task' que use la lógica universal
-        self.app.job_queue.submit(f"Combinando {len(paths)} archivos",
+        self.submit_job(f"Combinando {len(paths)} archivos",
                                  _merge_all_task, paths, out, fmt,
                                  on_done=self._on_done)
 
@@ -231,7 +237,7 @@ class ReplacePanel(_BaseDocPanel):
         if not out_dir:
             return
 
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Doc: Reemplazando '{search}'",
             _batch_replace_task, paths, out_dir, search, replace,
             on_done=self._on_done
@@ -254,7 +260,10 @@ class ExtractTextPanel(_BaseDocPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         
         out = filedialog.asksaveasfilename(
             title="Guardar texto extraído en...",
@@ -264,7 +273,7 @@ class ExtractTextPanel(_BaseDocPanel):
         )
         if not out: return
 
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Extraer/OCR: {len(paths)} archivo(s)",
             self._proccess_ocr_task, paths, out,
             on_done=self._on_done
@@ -339,64 +348,103 @@ def _convert_to_pdf_task(input_path: str, output_path: str, progress_cb=None):
 
 def _batch_replace_task(paths: list, out_dir: str, search_text: str, replace_text: str, progress_cb=None):
     """Busca y reemplaza texto en múltiples archivos (.docx y texto plano)."""
+    from docx.opc.exceptions import PackageNotFoundError
     count = 0
     errores = []
-    
-    # Definimos qué extensiones se leen como texto plano ultrarrápido
+
     TEXT_EXTS = [".txt", ".md", ".json", ".xml", ".config", ".ini", ".csv", ".py", ".c", ".cpp"]
+
+    def _replace_in_paragraph(p):
+        """Reemplaza texto en un párrafo usando estrategia de dos pasos.
+        
+        Paso 1 (sin pérdida de formato): busca el texto dentro de cada run individual.
+                 Funciona cuando el texto buscado cae completamente dentro de un único run.
+        Paso 2 (fallback para fragmentación): si el texto existe en el párrafo completo
+                 pero está repartido entre varios runs, une todo el texto, reemplaza y 
+                 lo vuelca en el primer run. El párrafo queda con el texto correcto pero
+                 esa línea pierde el formato inline (negritas/cursivas) de ese fragmento.
+        """
+        modificado = False
+
+        # --- PASO 1: reemplazo run a run (preserva el formato al 100%) ---
+        for run in p.runs:
+            if search_text in run.text:
+                run.text = run.text.replace(search_text, replace_text)
+                modificado = True
+
+        # --- PASO 2: texto fragmentado entre runs (preserva estilo de párrafo) ---
+        if not modificado and search_text in p.text:
+            texto_completo = p.text.replace(search_text, replace_text)
+            # Vaciamos todos los runs y ponemos el resultado en el primero
+            for run in p.runs:
+                run.text = ""
+            if p.runs:
+                p.runs[0].text = texto_completo
+            else:
+                p.add_run(texto_completo)
+            modificado = True
+
+        return modificado
 
     for i, src in enumerate(paths):
         try:
             ext = os.path.splitext(src)[1].lower()
             stem = os.path.splitext(os.path.basename(src))[0]
-            
+
             # --- RUTA A: Archivos DOCX (Word) ---
             if ext == ".docx":
-                doc = Document(src)
+                try:
+                    doc = Document(src)
+                except PackageNotFoundError:
+                    errores.append(
+                        f"{os.path.basename(src)}: Formato incompatible. "
+                        "Probablemente es un .doc antiguo renombrado como .docx. "
+                        "Ábrelo con MS Word o LibreOffice y guárdalo de nuevo como .docx."
+                    )
+                    if progress_cb: progress_cb((i + 1) / len(paths))
+                    continue
+
                 modificado = False
-                
-                # Buscar en Párrafos y Tablas conservando el formato visual
+
                 for p in doc.paragraphs:
-                    for run in p.runs:
-                        if search_text in run.text:
-                            run.text = run.text.replace(search_text, replace_text)
-                            modificado = True
-                            
+                    if _replace_in_paragraph(p):
+                        modificado = True
+
                 for table in doc.tables:
                     for row in table.rows:
                         for cell in row.cells:
                             for p in cell.paragraphs:
-                                for run in p.runs:
-                                    if search_text in run.text:
-                                        run.text = run.text.replace(search_text, replace_text)
-                                        modificado = True
-                                        
+                                if _replace_in_paragraph(p):
+                                    modificado = True
+
                 if modificado:
                     out = os.path.join(out_dir, f"{stem}_modificado.docx")
                     doc.save(out)
                     count += 1
-                    
+                else:
+                    errores.append(f"{os.path.basename(src)}: Texto no encontrado, archivo sin cambios.")
+
             # --- RUTA B: Archivos de Texto Plano y Código ---
             elif ext in TEXT_EXTS:
-                # Usamos UTF-8 para evitar problemas con tildes o caracteres de código
                 with open(src, "r", encoding="utf-8", errors="ignore") as f:
                     contenido = f.read()
-                    
+
                 if search_text in contenido:
                     nuevo_contenido = contenido.replace(search_text, replace_text)
                     out = os.path.join(out_dir, f"{stem}_modificado{ext}")
-                    
                     with open(out, "w", encoding="utf-8") as f:
                         f.write(nuevo_contenido)
                     count += 1
+                else:
+                    errores.append(f"{os.path.basename(src)}: Texto no encontrado, archivo sin cambios.")
             else:
                 errores.append(f"{os.path.basename(src)}: Formato {ext} no soportado para reemplazar.")
 
         except Exception as e:
             errores.append(f"{os.path.basename(src)}: {str(e)}")
-            
+
         if progress_cb: progress_cb((i + 1) / len(paths))
-        
+
     # --- RESULTADO ---
     if errores:
         return f"Proceso finalizado con errores.\nModificados: {count}\nFallos:\n" + "\n".join(errores)
@@ -462,8 +510,8 @@ def _merge_all_task(paths: list, output_path: str, target_fmt: str, progress_cb=
     except Exception as e:
         return f"Error combinando: {str(e)}"
     
-# Configuramos la ruta del ejecutable de Tesseract
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Configuramos la ruta del ejecutable de Tesseract de forma portable
+pytesseract.pytesseract.tesseract_cmd = resolve_tool_path("Tesseract-OCR", "tesseract.exe")
 
 def _get_text_universal(path):
     """Extrae texto de archivos digitales o escaneados (OCR)."""
@@ -479,9 +527,12 @@ def _get_text_universal(path):
         # 2. Si es un escaneo (poco texto digital), activamos OCR
         if len(text.strip()) < 50:
             from pdf2image import convert_from_path
-            # Usamos el poppler que ya configuraste antes
-            poppler_path = r"C:\poppler\poppler-25.12.0\Library\bin"
-            pages = convert_from_path(path, dpi=300, poppler_path=poppler_path)
+            # Localizamos Poppler de forma dinámica
+            poppler_path = resolve_tool_path("poppler", "pdftocairo.exe")
+            # pdf2image necesita la carpeta que contiene el binario, no el binario en sí
+            poppler_dir = os.path.dirname(poppler_path) if poppler_path != "pdftocairo.exe" else None
+            
+            pages = convert_from_path(path, dpi=300, poppler_path=poppler_dir)
             
             ocr_parts = []
             for page in pages:
@@ -502,3 +553,5 @@ def _get_text_universal(path):
             text = f.read()
             
     return text
+
+

@@ -5,6 +5,7 @@ Hereda de TkinterDnD para permitir funcionalidad nativa de arrastrar y soltar
 archivos desde el sistema operativo en cualquier parte de la ventana.
 """
 
+import os
 import threading
 import customtkinter as ctk
 import pystray
@@ -356,6 +357,11 @@ class PrismShell(TkinterDnD.Tk):
         else:
             self._jobs_status.configure(text="")
 
+    def open_job_panel(self):
+        """Fuerza la apertura gráfica del panel lateral si está cerrado."""
+        if not self._job_panel_visible:
+            self._toggle_job_panel()
+
     def _toggle_job_panel(self):
         self._job_panel_visible = not self._job_panel_visible
         if self._job_panel_visible:
@@ -418,9 +424,10 @@ class PrismShell(TkinterDnD.Tk):
         ).pack(pady=30)
 
     def _hide_window(self):
-        """Oculta la ventana y activa el icono en el área de notificación si está configurado."""
+        """Oculta la ventana y activa el icóno en el área de notificación si está configurado."""
         if not cfg.get("close_to_tray"):
-            self.quit()
+            self.destroy()
+            os._exit(0)  # Mata todos los hilos de IA en segundo plano
             return
             
         self.withdraw()
@@ -445,4 +452,5 @@ class PrismShell(TkinterDnD.Tk):
     def _quit_app(self, icon, item):
         """Cierra la aplicación por completo y mata los procesos en segundo plano."""
         self.tray_icon.stop()
-        self.quit()
+        self.destroy()
+        os._exit(0)  # Mata todos los hilos de IA/workers en segundo plano

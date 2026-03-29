@@ -91,10 +91,15 @@ foreach ($item in $appItems) {
 }
 
 # --- PASO 7: Copiar herramientas externas y modelo AI ---
-Write-Host "[7/8] Copiando FFmpeg, Poppler y modelo Whisper..." -ForegroundColor Yellow
-$extItems = @("ffmpeg", "poppler", "small.pt")
+Write-Host "[7/8] Copiando FFmpeg, Poppler, Tesseract, modelo Whisper y U2NET..." -ForegroundColor Yellow
+$extItems = @("ffmpeg", "poppler", "Tesseract-OCR", "small.pt", ".u2net")
 foreach ($item in $extItems) {
     $src = Join-Path $ROOT $item
+    # Fallback para Tesseract si no está en la raíz
+    if ($item -eq "Tesseract-OCR" -and -not (Test-Path $src)) {
+        $src = "C:\Program Files\Tesseract-OCR"
+    }
+
     $dst = Join-Path $DIST $item
     if (Test-Path $src) {
         if (Test-Path $src -PathType Container) {

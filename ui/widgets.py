@@ -284,10 +284,28 @@ class JobPanel(ctk.CTkFrame):
             ctk.CTkLabel(info_frame, text=label, font=("Segoe UI", 10),
                          text_color=color, anchor="w").pack(side="left")
 
-            if job.status == JobStatus.DONE and isinstance(job.result, str) and os.path.exists(job.result):
+            # --- Botón de Abrir Inteligente ---
+            path_to_open = None
+            if job.status == JobStatus.DONE and isinstance(job.result, str):
+                # Buscamos la primera línea que represente una ruta válida (archivo o carpeta)
+                for line in job.result.split('\n'):
+                    candidate = line.strip()
+                    if candidate and os.path.exists(candidate):
+                        path_to_open = candidate
+                        break
+
+            if path_to_open:
                 import subprocess
-                def open_folder(path=job.result):
-                    subprocess.run(['explorer', '/select,', os.path.normpath(path)])
+                def open_folder(path=path_to_open):
+                    # Forzamos "/" a "\" para Windows y limpiamos espacios residuales
+                    clean_path = os.path.normpath(path)
+                    if os.path.isfile(clean_path):
+                        # Si es un archivo, lo seleccionamos en su carpeta contenedora
+                        subprocess.run(['explorer', '/select,', clean_path], check=False)
+                    else:
+                        # Si es una carpeta, simplemente la abrimos
+                        os.startfile(clean_path)
+
                 ctk.CTkButton(info_frame, text="📂 Abrir", width=50, height=20, font=("Segoe UI", 10),
                               fg_color="transparent", hover_color=BORDER, text_color=TEXT_PRI,
                               command=open_folder).pack(side="right", padx=5)

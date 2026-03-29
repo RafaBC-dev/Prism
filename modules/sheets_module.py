@@ -16,12 +16,13 @@ Dependencias:
 - pandas (Motor analítico C-Optimized)
 - openpyxl (Lectura/Escritura XML nativa XLSX)
 """
+import os
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pandas as pd
 
 from modules.base_module import (
-    BaseModule, BG_DARK, BG_CARD, BG_ITEM,
+    BaseModule, BasePanel, BG_DARK, BG_CARD, BG_ITEM,
     ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER
 )
 from core.job_queue import JobStatus
@@ -36,15 +37,14 @@ TOOLS = [
 SHEET_EXTS = [".xlsx", ".xls", ".csv", ".ods"]
 
 
-class _BaseSheetPanel(ctk.CTkFrame):
+class _BaseSheetPanel(BasePanel):
     title = ""
     description = ""
     multi_file = False
     allowed_exts = SHEET_EXTS
 
     def __init__(self, master, app, **kwargs):
-        super().__init__(master, fg_color=BG_DARK, corner_radius=0, **kwargs)
-        self.app = app
+        super().__init__(master, app=app, **kwargs)
         self.columnconfigure(0, weight=1)
         self._build_common()
         self._build_options()
@@ -124,7 +124,10 @@ class SheetUniversalPanel(_BaseSheetPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         
         fmt = self._target_fmt.get().lower()
         out = filedialog.asksaveasfilename(defaultextension="."+fmt, initialfile="resultado."+fmt)
@@ -136,7 +139,7 @@ class SheetUniversalPanel(_BaseSheetPanel):
             "strip_spaces": self._opt_strip.get()
         }
 
-        self.app.job_queue.submit(f"Pandas: {len(paths)} archivos",
+        self.submit_job(f"Pandas: {len(paths)} archivos",
                                  _heavy_sheet_task, paths, out, opts,
                                  on_done=self._on_done)
 
@@ -156,7 +159,7 @@ class SplitSheetsPanel(_BaseSheetPanel):
         if not out_dir: return
         
         # Llamamos a la función de Pandas que tienes al final
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Separar: {os.path.basename(paths[0])}",
             _split_sheets_pandas, paths[0], out_dir,
             on_done=self._on_done
@@ -189,7 +192,7 @@ class PreviewPanel(_BaseSheetPanel):
                 ))
 
         # Llamamos a la función de estadísticas de Pandas
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Analizando {os.path.basename(paths[0])}",
             _get_enhanced_preview, paths[0],
             on_done=_update_ui

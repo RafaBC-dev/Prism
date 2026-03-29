@@ -18,6 +18,7 @@ Dependencias:
 - Rembg/onnxruntime: IA de fondo.
 - Pillow_heif: (Fallo silencioso opcional) Para leer fotogramas Apple HEIC.
 """
+import os
 import customtkinter as ctk
 from PIL import Image
 import onnxruntime as ort
@@ -25,14 +26,14 @@ from tkinter import messagebox, filedialog
 
 # Importamos las bases y constantes del proyecto
 from modules.base_module import (
-    BaseModule, BG_DARK, BG_CARD, BG_ITEM,
+    BaseModule, BasePanel, BG_DARK, BG_CARD, BG_ITEM,
     ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER, DANGER
 )
 from core.job_queue import JobStatus
 from ui.widgets import DropZone, FileListWidget
 
 # --- CONFIGURACIÓN ---
-IMG_EXTS = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif"]
+IMG_EXTS = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif", ".heic"]
 
 # Lista de herramientas para el Sidebar lateral
 TOOLS = [
@@ -56,6 +57,14 @@ def _preload_ai():
         from rembg import remove, new_session
     except:
         pass
+    
+    # Registrar opener para soportar fotos de iPhone (.heic)
+    try:
+        from pillow_heif import register_heif_opener
+        register_heif_opener()
+    except Exception:
+        pass
+
 threading.Thread(target=_preload_ai, daemon=True).start()
 
 def _get_ai_session():
@@ -72,14 +81,13 @@ def _get_ai_session():
     return new_session("u2net", providers=sel)
 
 def _ai_remove_bg_task(input_path: str, output_path: str, progress_cb=None):
-    from rembg import remove
     """Tarea principal de eliminación de fondo para la cola de trabajos."""
     try:
+        from rembg import remove
         session = _get_ai_session()
         with open(input_path, 'rb') as i:
             input_data = i.read()
-            # Ya precargado, instántaneo
-            output_data = remove(input_data, session=session)     
+        output_data = remove(input_data, session=session)
         with open(output_path, 'wb') as o:
             o.write(output_data)
         return output_path
@@ -124,21 +132,23 @@ class PreviewPanel(ctk.CTkFrame):
                 img.thumbnail((250, 180))
                 ctk_img = ctk.CTkImage(light_image=img, dark_image=img, size=img.size)
                 lbl.configure(image=ctk_img, text="")
+                lbl._img_ref = ctk_img  # Evita que el GC de Python destruya la imagen
             except Exception:
                 lbl.configure(text="Error carga")
 
 
 # ── Panel Base para Imágenes ──────────────────────────────────────────────────
 
-class _BaseImgPanel(ctk.CTkFrame):
+class _BaseImgPanel(BasePanel):
     title = ""
     description = ""
     multi_file = False
     allowed_exts = IMG_EXTS
 
     def __init__(self, master, app, **kwargs):
-        super().__init__(master, fg_color=BG_DARK, corner_radius=0, **kwargs)
-        self.app = app
+        # Filtramos multi_file para que no choque con CTkFrame
+        if "multi_file" in kwargs: self.multi_file = kwargs.pop("multi_file")
+        super().__init__(master, app=app, **kwargs)
         self.columnconfigure(0, weight=1)
         self._build_common()
         self._build_options()
@@ -177,11 +187,13 @@ class _BaseImgPanel(ctk.CTkFrame):
     def _on_done(self, job):
         if job.status == JobStatus.DONE:
             # Si hay un resultado de imagen, lo mostramos en el preview
-            if os.path.exists(str(job.result)) and hasattr(self.master, 'preview'):
-                self.master.preview.update_previews(self._file_list.paths[0], job.result)
-            self.app.after(0, lambda: messagebox.showinfo("Listo", f"Guardado en:\n{job.result}"))
+            result = job.result
+            if isinstance(result, str) and os.path.exists(result) and hasattr(self.master, 'preview'):
+                self.master.preview.update_previews(self._file_list.paths[0], result)
+            self.app.after(0, lambda r=result: messagebox.showinfo("Listo", f"Guardado en:\n{r}"))
         elif job.status == JobStatus.ERROR:
-            self.app.after(0, lambda: messagebox.showerror("Error", job.error))
+            err = job.error
+            self.app.after(0, lambda e=err: messagebox.showerror("Error", e))
 
     def _section(self, text, row=3):
         f = ctk.CTkFrame(self, fg_color=BG_CARD, corner_radius=10)
@@ -207,7 +219,10 @@ class RemoveBgPanel(_BaseImgPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         
         # Ahora preguntamos dónde guardar
         out = filedialog.asksaveasfilename(
@@ -218,7 +233,7 @@ class RemoveBgPanel(_BaseImgPanel):
         )
         if not out: return
 
-        self.app.job_queue.submit(
+        self.submit_job(
             f"IA: Procesando {os.path.basename(paths[0])}",
             _ai_remove_bg_task, paths[0], out,
             on_done=self._on_done,
@@ -334,14 +349,14 @@ class ConvertPanel(_BaseImgPanel):
                 filetypes=[(fmt.upper(), f"*{ext}")],
                 initialfile=os.path.splitext(os.path.basename(paths[0]))[0] + ext)
             if not out: return
-            self.app.job_queue.submit(
+            self.submit_job(
                 f"Convertir → {fmt.upper()}",
                 _convert_single, paths[0], out, fmt, quality,
                 on_done=self._on_done)
         else:
             out_dir = filedialog.askdirectory(title="Carpeta de salida")
             if not out_dir: return
-            self.app.job_queue.submit(
+            self.submit_job(
                 f"Convertir {len(paths)} imágenes → {fmt.upper()}",
                 _convert_batch, paths, out_dir, fmt, quality,
                 on_done=self._on_done)
@@ -408,14 +423,14 @@ class ResizePanel(_BaseImgPanel):
                 filetypes=[("Imagen", f"*{ext}")],
                 initialfile=os.path.splitext(os.path.basename(src))[0] + "_resized" + ext)
             if not out: return
-            self.app.job_queue.submit(
+            self.submit_job(
                 f"Redimensionar {os.path.basename(src)}",
                 _resize_single, src, out, mode, val,
                 on_done=self._on_done)
         else:
             out_dir = filedialog.askdirectory(title="Carpeta de salida")
             if not out_dir: return
-            self.app.job_queue.submit(
+            self.submit_job(
                 f"Redimensionar {len(paths)} imágenes",
                 _resize_batch, paths, out_dir, mode, val,
                 on_done=self._on_done)
@@ -463,14 +478,14 @@ class CompressPanel(_BaseImgPanel):
                 filetypes=[("Imagen", f"*{ext}")],
                 initialfile=os.path.splitext(os.path.basename(src))[0] + "_compressed" + ext)
             if not out: return
-            self.app.job_queue.submit(
+            self.submit_job(
                 f"Comprimir {os.path.basename(src)}",
                 _compress_single, src, out, quality,
                 on_done=self._on_done)
         else:
             out_dir = filedialog.askdirectory(title="Carpeta de salida")
             if not out_dir: return
-            self.app.job_queue.submit(
+            self.submit_job(
                 f"Comprimir {len(paths)} imágenes",
                 _compress_batch, paths, out_dir, quality,
                 on_done=self._on_done)
@@ -507,7 +522,7 @@ class ToPdfPanel(_BaseImgPanel):
             filetypes=[("PDF", "*.pdf")], initialfile="imagenes.pdf")
         if not out: return
         page_size = self._page_size.get()
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Imágenes → PDF ({len(paths)} imgs)",
             _images_to_pdf, paths, out, page_size,
             on_done=self._on_done)
@@ -552,7 +567,7 @@ class FromPdfPanel(_BaseImgPanel):
         if not out_dir: return
         fmt = self._fmt.get().lower()
         dpi = int(self._dpi.get())
-        self.app.job_queue.submit(
+        self.submit_job(
             f"PDF → Imágenes: {os.path.basename(paths[0])}",
             _pdf_to_images, paths[0], out_dir, fmt, dpi,
             on_done=self._on_done)
@@ -775,8 +790,40 @@ def _pdf_to_images(path: str, out_dir: str, fmt: str, dpi: int, progress_cb=None
             # Actualizamos progreso
             if progress_cb: progress_cb((i + 1) / total_pages)
             
-        doc.close()
-        return f"Conversión exitosa.\n{total_pages} imágenes guardadas en:\n{out_dir}"
+    finally:
+        if 'doc' in locals():
+            doc.close()
+    return f"Conversión exitosa.\n{total_pages} imágenes guardadas en:\n{out_dir}"
+
+def _ai_remove_bg_task(input_path: str, output_path: str, progress_cb=None):
+    """
+    Elimina el fondo de una imagen usando la librería rembg.
+    Utiliza u2net por defecto bajo el capó de rembg.
+    """
+    try:
+        from rembg import remove
+        from PIL import Image
+        import io
+
+        # Cargamos entrada
+        with open(input_path, 'rb') as i:
+            input_bytes = i.read()
+        
+        if progress_cb: progress_cb(0.3)
+        
+        # Procesamiento IA
+        output_bytes = remove(input_bytes)
+        
+        if progress_cb: progress_cb(0.8)
+        
+        # Guardado (forzando PNG para transparencia)
+        with open(output_path, 'wb') as o:
+            o.write(output_bytes)
+            
+        if progress_cb: progress_cb(1.0)
+        return output_path
+    except Exception as e:
+        raise RuntimeError(f"Error en IA de fondo: {str(e)}")
         
     except Exception as e:
         return f"Error crítico en la conversión de PDF: {str(e)}"

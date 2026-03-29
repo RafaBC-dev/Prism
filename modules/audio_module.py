@@ -25,8 +25,9 @@ from tkinter import messagebox, filedialog
 
 # Importamos las bases y constantes del proyecto
 from modules.base_module import (
-    BaseModule, BG_DARK, BG_CARD, BG_ITEM,
-    ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER
+    BaseModule, BasePanel, BG_DARK, BG_CARD, BG_ITEM,
+    ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER,
+    resolve_tool_path
 )
 from core.job_queue import JobStatus
 from ui.widgets import DropZone, FileListWidget
@@ -95,14 +96,13 @@ class AudioPreviewPanel(ctk.CTkFrame):
 
 # ── Panel Base y Herramientas ────────────────────────────────────────────────
 
-class _BaseAudioPanel(ctk.CTkFrame):
+class _BaseAudioPanel(BasePanel):
     title = ""
     description = ""
     allowed_exts = AUDIO_EXTS
 
     def __init__(self, master, app, **kwargs):
-        super().__init__(master, fg_color=BG_DARK, corner_radius=0, **kwargs)
-        self.app = app
+        super().__init__(master, app=app, **kwargs)
         self.columnconfigure(0, weight=1)
         self._build_common()
         self._build_options()
@@ -174,15 +174,21 @@ class TranscriptionPanel(_BaseAudioPanel):
     description = "Usa Whisper para convertir grabaciones a texto con alta precisión."
 
     def _build_options(self):
-        import torch
         f = self._section("Configuración de IA")
-        status = "GPU Acelerada (CUDA)" if torch.cuda.is_available() else "Modo CPU (Estándar)"
+        try:
+            import torch
+            status = "GPU Acelerada (CUDA)" if torch.cuda.is_available() else "Modo CPU (Estándar)"
+        except ImportError:
+            status = "PyTorch no detectado (instala torch)"
         ctk.CTkLabel(f, text=f"Hardware detectado: {status}", font=("Segoe UI", 11), text_color=TEXT_SEC).grid(
                      row=1, column=0, padx=14, pady=(0, 12), sticky="w")
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         
         out = filedialog.asksaveasfilename(
             title="Guardar transcripción", defaultextension=".txt",
@@ -194,7 +200,7 @@ class TranscriptionPanel(_BaseAudioPanel):
         if hasattr(self.master, 'preview'):
             self.master.preview.show_loading()
 
-        self.app.job_queue.submit(
+        self.submit_job(
             f"IA Audio: Transcribiendo {os.path.basename(paths[0])}",
             _ai_transcribe_task, paths[0], out,
             on_done=self._on_done
@@ -217,13 +223,16 @@ class ConvertAudioPanel(_BaseAudioPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         
         fmt = self._fmt.get().lower()
         out_dir = filedialog.askdirectory(title="Selecciona carpeta de salida")
         if not out_dir: return
 
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Audio: Convertir a {fmt.upper()}",
             _convert_audio, paths, out_dir, fmt, "192k", self.app.backend,
             on_done=self._on_done
@@ -283,7 +292,7 @@ class CutPanel(_BaseAudioPanel):
         )
         if not out: return
         backend = self.app.backend
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Cortar {os.path.basename(paths[0])}",
             _cut_audio, paths[0], out, start_ms, end_ms, backend,
             on_done=self._on_done,
@@ -323,7 +332,7 @@ class MergeAudioPanel(_BaseAudioPanel):
         )
         if not out: return
         backend = self.app.backend
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Unir {len(paths)} audios",
             _merge_audio, paths, out, fmt, backend,
             on_done=self._on_done,
@@ -387,7 +396,7 @@ class VolumePanel(_BaseAudioPanel):
         )
         if not out: return
         backend = self.app.backend
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Volumen {'+' if db>=0 else ''}{db}dB: {os.path.basename(paths[0])}",
             _adjust_volume, paths[0], out, db, backend,
             on_done=self._on_done,
@@ -431,7 +440,7 @@ class ExtractAudioPanel(_BaseAudioPanel):
         fmt = self._fmt.get().lower()
         bitrate = self._bitrate.get()
         backend = self.app.backend
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Extraer audio de {len(paths)} vídeo(s)",
             _extract_audio_from_video, paths, out_dir, fmt, bitrate, backend,
             on_done=self._on_done,
@@ -576,9 +585,12 @@ def _run_ffmpeg(args: list, timeout: int = 300) -> None:
     # Bandera mágica de Windows para ocultar la consola del subproceso
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     
+    # Intentamos localizar el ffmpeg local si existe
+    ffmpeg_exe = resolve_tool_path("ffmpeg", "ffmpeg.exe")
+
     # Ejecutamos FFmpeg
     result = subprocess.run(
-        ["ffmpeg", "-y"] + args,
+        [ffmpeg_exe, "-y"] + args,
         capture_output=True, # Capturamos la salida para que no salga en terminal
         text=True,
         timeout=timeout,

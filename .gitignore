@@ -12,6 +12,8 @@ venv/
 # Binarios pesados (El usuario debe bajarlos aparte)
 ffmpeg/
 poppler/
+Tesseract-OCR/
+
 
 # Configuración local y logs
 config.json

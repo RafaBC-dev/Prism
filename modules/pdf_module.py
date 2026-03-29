@@ -15,13 +15,16 @@ Dependencias:
 - pypdf2 / pypdf (Modificaciones de vector)
 - fitz (PyMuPDF) y pdf2image (Conversión fotográfica con bindings en poppler)
 """
+import os
+import io
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from pypdf import PdfReader, PdfWriter
+from pypdf.generic import NameObject, NumberObject
 import zipfile
 
 from modules.base_module import (
-    BaseModule, BG_DARK, BG_CARD, BG_ITEM,
+    BaseModule, BasePanel, BG_DARK, BG_CARD, BG_ITEM,
     ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, SUCCESS, DANGER, BORDER
 )
 from core.job_queue import JobStatus
@@ -97,14 +100,13 @@ class PdfModule(BaseModule):
             self._panels[tid] = panel
 
 
-class _BasePdfPanel(ctk.CTkFrame):
+class _BasePdfPanel(BasePanel):
     title = ""
     description = ""
     multi_file = False
 
     def __init__(self, master, app, **kwargs):
-        super().__init__(master, fg_color=BG_DARK, corner_radius=0, **kwargs)
-        self.app = app
+        super().__init__(master, app=app, **kwargs)
         self.columnconfigure(0, weight=1)
         self._build_common()
         self._build_options()
@@ -176,7 +178,7 @@ class MergePanel(_BasePdfPanel):
             messagebox.showwarning("Pocos archivos", "Añade al menos 2 PDFs."); return
         out = self._ask_save(default="combinado.pdf")
         if not out: return
-        self.app.job_queue.submit(f"Unir {len(paths)} PDFs", _merge_pdfs, paths, out, on_done=self._on_done)
+        self.submit_job(f"Unir {len(paths)} PDFs", _merge_pdfs, paths, out, on_done=self._on_done)
 
 
 class SplitPanel(_BasePdfPanel):
@@ -212,7 +214,7 @@ class SplitPanel(_BasePdfPanel):
         if mode == "n":
             try: n = int(self._n_entry.get()); assert n >= 1
             except: messagebox.showerror("Error", "N debe ser un número >= 1."); return
-        self.app.job_queue.submit(f"Separar {os.path.basename(paths[0])}", _split_pdf,
+        self.submit_job(f"Separar {os.path.basename(paths[0])}", _split_pdf,
                                   paths[0], out_dir, mode, n, on_done=self._on_done)
 
 
@@ -241,7 +243,7 @@ class ExtractPanel(_BasePdfPanel):
         if not rng: messagebox.showwarning("Sin rango", "Escribe qué páginas extraer."); return
         out = self._ask_save(default="extraido.pdf")
         if not out: return
-        self.app.job_queue.submit(f"Extraer de {os.path.basename(paths[0])}", _extract_pages,
+        self.submit_job(f"Extraer de {os.path.basename(paths[0])}", _extract_pages,
                                   paths[0], rng, out, on_done=self._on_done)
 
 
@@ -269,7 +271,7 @@ class RotatePanel(_BasePdfPanel):
         pages_str = self._pages_entry.get().strip()
         out = self._ask_save(default="rotado.pdf")
         if not out: return
-        self.app.job_queue.submit(f"Rotar {os.path.basename(paths[0])}", _rotate_pages,
+        self.submit_job(f"Rotar {os.path.basename(paths[0])}", _rotate_pages,
                                   paths[0], angle, pages_str, out, on_done=self._on_done)
 
 
@@ -306,7 +308,7 @@ class CompressPanel(_BasePdfPanel):
             filetypes=[("PDF", "*.pdf")], initialfile="comprimido.pdf"
         )
         if not out: return
-        self.app.job_queue.submit(
+        self.submit_job(
             f"Comprimir {os.path.basename(paths[0])}",
             _compress_pdf, paths[0], out, q_val,
             on_done=self._on_done,
@@ -339,7 +341,7 @@ class PasswordPanel(_BasePdfPanel):
         if not pw: messagebox.showwarning("Sin contraseña", "Introduce una contraseña."); return
         out = self._ask_save(default="protegido.pdf")
         if not out: return
-        self.app.job_queue.submit(f"Contraseña {os.path.basename(paths[0])}", _password_pdf,
+        self.submit_job(f"Contraseña {os.path.basename(paths[0])}", _password_pdf,
                                   paths[0], self._action.get(), pw, out, on_done=self._on_done)
 
 
@@ -483,14 +485,13 @@ def _password_pdf(path, action, password, output, progress_cb=None):
 
 # ── ZipPanel ──────────────────────────────────────────────────────────────────
 
-class ZipPanel(ctk.CTkFrame):
+class ZipPanel(BasePanel):
     """Empaqueta cualquier tipo de archivo en un ZIP."""
     title = "Empaquetar ZIP"
     description = "Comprime varios archivos (de cualquier tipo) en un .zip."
 
     def __init__(self, master, app, **kwargs):
-        super().__init__(master, fg_color=BG_DARK, corner_radius=0, **kwargs)
-        self.app = app
+        super().__init__(master, app=app, **kwargs)
         self.columnconfigure(0, weight=1)
         self._build_ui()
 
@@ -560,7 +561,7 @@ class ZipPanel(ctk.CTkFrame):
         if not out: return
         level_map = {"Rápido": 1, "Normal": 6, "Máximo": 9}
         level = level_map.get(self._level.get(), 6)
-        self.app.job_queue.submit(
+        self.submit_job(
             f"ZIP ({len(paths)} archivos)",
             _create_zip, paths, out, level,
             on_done=self._on_done,

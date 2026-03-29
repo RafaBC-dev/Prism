@@ -56,13 +56,6 @@ def main():
     """
     from ui.shell import PrismShell
     app = PrismShell()
-
-    # --- 3. KILL SWITCH (Cierre perfecto) ---
-    def on_closing():
-        app.destroy()
-        os._exit(0) # Aniquila la RAM y los hilos de la IA al instante
-        
-    app.protocol("WM_DELETE_WINDOW", on_closing)
     app.mainloop()
 
 if __name__ == "__main__":

@@ -7,6 +7,36 @@ la inserción de componentes visuales estándar (Divisores, Paneles).
 
 import customtkinter as ctk
 from abc import abstractmethod
+import os
+import sys
+
+def resolve_tool_path(subdir: str, exe: str) -> str:
+    """
+    Localiza un binario de herramienta externo de forma portable.
+    Busca primero en la carpeta de la aplicación (distribución) y 
+    luego cae al PATH global del sistema.
+    """
+    # Determinamos la raíz de la aplicación (donde está main.py o el .exe)
+    if getattr(sys, 'frozen', False):
+        # Ejecutando desde el empaquetado (dist/Prism/)
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        # Ejecutando desde código fuente (modules/ es hijo de la raíz)
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # Candidatos comunes de carpetas de herramientas
+    candidates = [
+        os.path.join(base_dir, subdir, exe),                 # Tesseract-OCR/tesseract.exe
+        os.path.join(base_dir, subdir, "bin", exe),          # ffmpeg/bin/ffmpeg.exe
+        os.path.join(base_dir, subdir, "Library", "bin", exe) # poppler/Library/bin/pdftocairo.exe
+    ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+            
+    # Fallback: asumimos que está en el PATH global del sistema
+    return exe
 
 # ── Paleta compartida ────────────────────────────────────────────────────────
 BG_DARK  = "#0F172A"
@@ -82,6 +112,9 @@ class BaseModule(ctk.CTkFrame):
     # ── Helpers para subclases ───────────────────────────────────────────────
 
     def submit_job(self, name: str, fn, *args, on_done=None, **kwargs) -> str:
+        # Abre el panel lateral automáticamente para que el usuario sepa que algo ocurre
+        if hasattr(self.app, 'open_job_panel'):
+            self.app.open_job_panel()
         return self.app.job_queue.submit(name, fn, *args, on_done=on_done, **kwargs)
 
     def set_status(self, msg: str, error=False, success=False):
@@ -97,3 +130,41 @@ class BaseModule(ctk.CTkFrame):
     def receive_files(self, paths: list[str]):
         """Called when files are dropped anywhere on the window."""
         ...
+
+
+class BasePanel(ctk.CTkFrame):
+    """
+    Clase base para todos los paneles de herramientas (ConvertPanel, ResizePanel, etc).
+    Proporciona métodos rápidos para interactuar con la JobQueue y el estado de la app
+    a través del módulo padre (master).
+    """
+    def __init__(self, master, app=None, **kwargs):
+        # Aseguramos un estilo base para todos los paneles si no se especifica otro.
+        kwargs.setdefault("fg_color", BG_DARK)
+        kwargs.setdefault("corner_radius", 0)
+        super().__init__(master, **kwargs)
+        self._app_override = app
+
+    def submit_job(self, name: str, fn, *args, **kwargs) -> str:
+        """Proxy para enviar trabajos a través del módulo contenedor."""
+        if hasattr(self.master, 'submit_job'):
+            return self.master.submit_job(name, fn, *args, **kwargs)
+        # Fallback de seguridad si el padre no es un BaseModule
+        return self.app.job_queue.submit(name, fn, *args, **kwargs)
+
+    def set_status(self, msg: str, error=False, success=False):
+        """Proxy para actualizar el estado a través del módulo contenedor."""
+        if hasattr(self.master, 'set_status'):
+            self.master.set_status(msg, error=error, success=success)
+        else:
+            self.app.set_status(msg, error=error, success=success)
+
+    @property
+    def app(self):
+        """Retorna el objeto app buscándolo recursivamente o via inyección."""
+        if hasattr(self, '_app_override') and self._app_override:
+            return self._app_override
+        if hasattr(self.master, 'app'):
+            return self.master.app
+        # Si el master es la app (ej. tests)
+        return self.master

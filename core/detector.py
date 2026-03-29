@@ -13,7 +13,7 @@ EXTENSION_MAP = {
     ".xlsx": "sheets", ".xls": "sheets", ".csv": "sheets", ".ods": "sheets",
     ".png": "images", ".jpg": "images", ".jpeg": "images",
     ".webp": "images", ".gif": "images", ".bmp": "images",
-    ".tiff": "images", ".tif": "images",
+    ".tiff": "images", ".tif": "images", ".heic": "images",
     ".mp3": "audio", ".wav": "audio", ".ogg": "audio",
     ".flac": "audio", ".aac": "audio", ".m4a": "audio",
     ".mp4": "video", ".mkv": "video", ".avi": "video",

@@ -20,14 +20,16 @@ Estructura Interna:
 - VSP (VideoStatusPanel) dibuja un mini-dashboard.
 - Funciones `_run_ffmpeg_task` son puramente asíncronas para el ThreadPool de la JobQueue.
 """
+import os
 import subprocess
 import json
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from modules.base_module import (
-    BaseModule, BG_DARK, BG_CARD, BG_ITEM,
-    ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER
+    BaseModule, BasePanel, BG_DARK, BG_CARD, BG_ITEM,
+    ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER,
+    resolve_tool_path
 )
 from core.job_queue import JobStatus
 from ui.widgets import DropZone, FileListWidget
@@ -78,7 +80,8 @@ class VideoPreviewPanel(ctk.CTkFrame):
 
     def _get_video_specs(self, path):
         try:
-            cmd = ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path]
+            ffprobe_exe = resolve_tool_path("ffmpeg", "ffprobe.exe")
+            cmd = [ffprobe_exe, "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path]
             cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
             raw = subprocess.check_output(cmd, text=True, creationflags=cf)
             data = json.loads(raw)
@@ -131,14 +134,13 @@ class VideoPreviewPanel(ctk.CTkFrame):
 
 # ── Panel base ────────────────────────────────────────────────────────────────
 
-class _BaseVideoPanel(ctk.CTkFrame):
+class _BaseVideoPanel(BasePanel):
     title = ""
     description = ""
     multi_file = False
 
     def __init__(self, master, app, **kwargs):
-        super().__init__(master, fg_color=BG_DARK, corner_radius=0, **kwargs)
-        self.app = app
+        super().__init__(master, app=app, **kwargs)
         self.columnconfigure(0, weight=1)
         self._build_common()
         self._build_options()
@@ -207,11 +209,14 @@ class ConvertPanel(_BaseVideoPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         fmt = self._fmt.get().lower()
         out = filedialog.asksaveasfilename(defaultextension=f".{fmt}", initialfile="convertido."+fmt)
         if not out: return
-        self.app.job_queue.submit(f"Vídeo: Convertir", _video_task, paths[0], out, "convert", {}, on_done=self._on_done)
+        self.submit_job(f"Vídeo: Convertir", _video_task, paths[0], out, "convert", {}, on_done=self._on_done)
 
 class VideoAudioPanel(_BaseVideoPanel):
     title = "Normalización de Audio Profesional"
@@ -225,10 +230,13 @@ class VideoAudioPanel(_BaseVideoPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         out = filedialog.asksaveasfilename(defaultextension=".mp4", initialfile="audio_normalizado.mp4")
         if not out: return
-        self.app.job_queue.submit(f"Normalizando", _video_task, paths[0], out, mode="audio", on_done=self._on_done)
+        self.submit_job(f"Normalizando", _video_task, paths[0], out, mode="audio", on_done=self._on_done)
 
 class CutPanel(_BaseVideoPanel):
     title = "Recortar vídeo"
@@ -249,7 +257,10 @@ class CutPanel(_BaseVideoPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         start = self._start.get() or "00:00:00"
         end = self._end.get()
         if not end:
@@ -258,7 +269,7 @@ class CutPanel(_BaseVideoPanel):
 
         out = filedialog.asksaveasfilename(defaultextension=".mp4", initialfile="recorte.mp4")
         if not out: return
-        self.app.job_queue.submit(f"Recortando", _cut_video_task, paths[0], out, start, end, on_done=self._on_done)
+        self.submit_job(f"Recortando", _cut_video_task, paths[0], out, start, end, on_done=self._on_done)
 
 class JoinPanel(_BaseVideoPanel):
     title = "Unir Vídeos"
@@ -280,7 +291,7 @@ class JoinPanel(_BaseVideoPanel):
         out = filedialog.asksaveasfilename(defaultextension=ext, initialfile=f"unidos{ext}")
         if not out: return
 
-        self.app.job_queue.submit(f"Uniendo {len(paths)} clips", _join_videos_task, paths, out, on_done=self._on_done)
+        self.submit_job(f"Uniendo {len(paths)} clips", _join_videos_task, paths, out, on_done=self._on_done)
 
 class VideoSubsPanel(_BaseVideoPanel):
     title = "Incrustar Subtítulos"
@@ -298,10 +309,13 @@ class VideoSubsPanel(_BaseVideoPanel):
     def _run(self):
         paths = self._file_list.paths
         srt = self._srt_path.get()
-        if not paths or srt == "No seleccionado...": return
+        if not paths:
+            messagebox.showwarning("Sin archivo", "Primero añade un vídeo."); return
+        if srt == "No seleccionado...":
+            messagebox.showwarning("Sin subtítulos", "Selecciona un archivo .srt primero."); return
         out = filedialog.asksaveasfilename(defaultextension=".mp4", initialfile="con_subtitulos.mp4")
         if not out: return
-        self.app.job_queue.submit(f"Incrustando subs", _video_task, paths[0], out, "subs", {"srt_path": srt}, on_done=self._on_done)
+        self.submit_job(f"Incrustando subs", _video_task, paths[0], out, "subs", {"srt_path": srt}, on_done=self._on_done)
 
 class GifPanel(_BaseVideoPanel):
     title = "Convertir a GIF"
@@ -334,7 +348,10 @@ class GifPanel(_BaseVideoPanel):
 
     def _run(self):
         paths = self._file_list.paths
-        if not paths: return
+        if not paths:
+            from tkinter import messagebox
+            messagebox.showwarning("Aviso", "Primero debes arrastrar al menos un archivo al recuadro superior antes de hacer clic en Ejecutar.")
+            return
         fps = self._fps.get()
         width = self._width.get()
         start = self._start.get()
@@ -343,14 +360,15 @@ class GifPanel(_BaseVideoPanel):
         out = filedialog.asksaveasfilename(defaultextension=".gif", initialfile="animacion.gif")
         if not out: return
 
-        self.app.job_queue.submit(f"Generando GIF", _video_to_gif_task, paths[0], out, fps, width, start, end, on_done=self._on_done)
+        self.submit_job(f"Generando GIF", _video_to_gif_task, paths[0], out, fps, width, start, end, on_done=self._on_done)
 
 # ── Tareas de FFmpeg ───────────────
 
 def _cut_video_task(path, out, start, end, progress_cb=None):
     try:
+        ffmpeg_exe = resolve_tool_path("ffmpeg", "ffmpeg.exe")
         cf = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
-        args = ["ffmpeg", "-ss", start, "-to", end, "-i", path, "-c", "copy", "-y", out]
+        args = [ffmpeg_exe, "-ss", start, "-to", end, "-i", path, "-c", "copy", "-y", out]
         subprocess.run(args, check=True, capture_output=True, creationflags=cf)
         return out
     except Exception as e:
@@ -366,7 +384,8 @@ def _join_videos_task(paths, out, progress_cb=None):
                 clean_path = p.replace("\\", "/").replace("'", "'\\''")
                 f.write(f"file '{clean_path}'\n")
         
-        args = ["ffmpeg", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", "-y", out]
+        ffmpeg_exe = resolve_tool_path("ffmpeg", "ffmpeg.exe")
+        args = [ffmpeg_exe, "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", "-y", out]
         subprocess.run(args, check=True, capture_output=True, creationflags=cf)
         if os.path.exists(list_file): os.remove(list_file)
         return out
@@ -380,7 +399,8 @@ def _video_to_gif_task(path, out, fps, width, start, end, progress_cb=None):
         palette = "palette.png"
         filters = f"fps={fps},scale={width}:-1:flags=lanczos"
         
-        base_cmd = ["ffmpeg"]
+        ffmpeg_exe = resolve_tool_path("ffmpeg", "ffmpeg.exe")
+        base_cmd = [ffmpeg_exe]
         if start: base_cmd += ["-ss", start]
         if end: base_cmd += ["-to", end]
         
@@ -397,7 +417,8 @@ def _video_to_gif_task(path, out, fps, width, start, end, progress_cb=None):
     
 def _video_task(input_path: str, output_path: str, mode="convert", params=None, progress_cb=None):
     try:
-        cmd = ["ffmpeg", "-i", input_path]
+        ffmpeg_exe = resolve_tool_path("ffmpeg", "ffmpeg.exe")
+        cmd = [ffmpeg_exe, "-i", input_path]
 
         if mode == "convert":
             cmd += ["-vf", "scale=1920:-1", "-c:v", "libx264", "-crf", "23", "-preset", "veryfast"]
