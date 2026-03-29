@@ -1,4 +1,10 @@
-﻿from pathlib import Path
+"""
+Módulo Detector (Enrutador de Extensiones)
+Identifica automáticamente el tipo de archivo y lo asocia con su módulo
+de procesamiento gráfico (Ej: .pdf -> módulo PDF, .mp4 -> módulo Vídeo).
+"""
+
+from pathlib import Path
 
 EXTENSION_MAP = {
     ".pdf": "pdf",
@@ -36,19 +42,30 @@ MODULE_ORDER = ["pdf", "docs", "sheets", "images", "audio", "video"]
 
 
 def detect_module(filepath: str) -> str | None:
+    """Extrae la extensión de un archivo y devuelve su ID de módulo asociado."""
     ext = Path(filepath).suffix.lower()
     return EXTENSION_MAP.get(ext)
 
 
 def get_icon(module_id: str) -> str:
+    """Obtiene el emoji descriptivo del módulo."""
     return MODULE_ICONS.get(module_id, "📁")
 
 
 def get_name(module_id: str) -> str:
+    """Obtiene el nombre en español del módulo."""
     return MODULE_NAMES.get(module_id, module_id)
 
 
 def file_info(filepath: str) -> dict:
+    """
+    Agrupa los metadatos esenciales de un archivo en disco.
+    
+    Args:
+        filepath (str): Ruta absoluta del archivo.
+    Returns:
+        dict: Objeto estandarizado con nombre, extensión, tamaño y módulo asignado.
+    """
     p = Path(filepath)
     size = p.stat().st_size if p.exists() else 0
     return {

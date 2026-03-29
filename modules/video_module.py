@@ -2,7 +2,24 @@
 Video Module — Prism (Layout 3 Columnas + Info Técnica)
 """
 
-import os
+"""
+Módulo de Procesamiento de Vídeo (Video Module)
+Hereda de BaseModule.
+
+Este módulo centraliza todas las operaciones multimedia de alto nivel:
+- Renderizado EBU R128 (Normalización comercial del audio en el clip de forma destructiva o sobre copia).
+- Redimensionado a resoluciones fijas (720p, 1080p, 4K) usando filtros Lanczos/Bilinear nativos de FFmpeg.
+- Conversión, extracción de fotogramas, generación de GIFs y compresión pesada (x265 vs x264).
+- Extracción e incrustación de subtítulos locales o dinámicos.
+
+Dependencias clave:
+- FFmpeg (imprescindible, si no está presente lanza fallo y bloquea botones en _build_options).
+- Hardware: Usa codec GPU (NVENC/AMF/QSV) si se detecta vía BackendStatus para acelerar procesos 10x.
+
+Estructura Interna:
+- VSP (VideoStatusPanel) dibuja un mini-dashboard.
+- Funciones `_run_ffmpeg_task` son puramente asíncronas para el ThreadPool de la JobQueue.
+"""
 import subprocess
 import json
 from tkinter import filedialog, messagebox

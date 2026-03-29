@@ -1,3 +1,10 @@
+"""
+Módulo de Ventana Principal (Shell UI)
+Contiene la estructura base de la aplicación (Sidebar, Barra de estado y panel central).
+Hereda de TkinterDnD para permitir funcionalidad nativa de arrastrar y soltar 
+archivos desde el sistema operativo en cualquier parte de la ventana.
+"""
+
 import threading
 import customtkinter as ctk
 import pystray
@@ -6,6 +13,8 @@ from tkinterdnd2 import TkinterDnD, DND_FILES
 
 from core.detector import detect_module, MODULE_ICONS, MODULE_NAMES, MODULE_ORDER
 from core.job_queue import JobQueue, JobStatus
+import core.config as cfg
+import plyer
 
 # ── Colores ───────────────────────────────────────────────────────────────────
 BG_DARK    = "#0F172A"
@@ -22,8 +31,17 @@ BORDER     = "#334155"
 
 
 class PrismShell(TkinterDnD.Tk):
+    """
+    Controlador maestro de la interfaz gráfica. Instancia los sub-módulos y gestiona
+    el enrutamiento visual, las notificaciones del sistema operativo y los eventos globales.
+    """
     def __init__(self):
         super().__init__()
+        
+        # Cargar configuración y aplicar tema
+        self._notified_jobs = set()
+        ctk.set_appearance_mode(cfg.get("theme", "Dark"))
+        
         self.title("Prism")
         self.geometry("1150x720")
         self.minsize(900, 580)
@@ -135,18 +153,26 @@ class PrismShell(TkinterDnD.Tk):
         # Spacer
         ctk.CTkFrame(sb, height=1, fg_color=BORDER).grid(row=11, column=0, sticky="ew", padx=12, pady=(0, 8))
 
-        # ─── COLA DE TRABAJOS ───
+        # ─── AJUSTES Y COLA DE TRABAJOS ───
+        self._settings_btn = ctk.CTkButton(
+            sb, text="  ⚙  Ajustes", anchor="w",
+            fg_color="transparent", hover_color=BG_ITEM, text_color=TEXT_SEC, 
+            font=("Segoe UI", 12), height=34, corner_radius=8,
+            command=self._open_settings,
+        )
+        self._settings_btn.grid(row=12, column=0, padx=8, pady=(2, 2), sticky="ew")
+
         self._jobs_btn = ctk.CTkButton(
-            sb, text="  ⚙  Cola de trabajos", anchor="w",
+            sb, text="  🕒  Cola de trabajos", anchor="w",
             fg_color="transparent", hover_color=BG_ITEM, text_color=TEXT_SEC, 
             font=("Segoe UI", 12), height=34, corner_radius=8,
             command=self._toggle_job_panel,
         )
-        self._jobs_btn.grid(row=12, column=0, padx=8, pady=(2, 20), sticky="ew")
+        self._jobs_btn.grid(row=13, column=0, padx=8, pady=(2, 20), sticky="ew")
         self._backend_lbl = ctk.CTkLabel(sb, text="")
 
     def _build_main(self):
-        self._main = ctk.CTkFrame(self, fg_color=BG_DARK, corner_radius=0)
+        self._main = ctk.CTkFrame(self, fg_color=BG_DARK, corner_radius=0, border_color=ACCENT)
         self._main.grid(row=0, column=1, sticky="nsew")
         self._main.grid_columnconfigure(0, weight=1)
         self._main.grid_rowconfigure(0, weight=1)
@@ -228,8 +254,18 @@ class PrismShell(TkinterDnD.Tk):
     def _setup_global_drop(self):
         self.drop_target_register(DND_FILES)
         self.dnd_bind("<<Drop>>", self._on_global_drop)
+        self.dnd_bind("<<DragEnter>>", self._on_drag_enter)
+        self.dnd_bind("<<DragLeave>>", self._on_drag_leave)
+        
+    def _on_drag_enter(self, event):
+        # Iluminar el borde principal fuertemente
+        self._main.configure(border_width=4)
+        
+    def _on_drag_leave(self, event):
+        self._main.configure(border_width=0)
 
     def _on_global_drop(self, event):
+        self._on_drag_leave(event)
         import re, os
         paths = []
         for m in re.finditer(r'\{([^}]+)\}|(\S+)', event.data):
@@ -288,6 +324,25 @@ class PrismShell(TkinterDnD.Tk):
         errors  = [j for j in jobs if j.status == JobStatus.ERROR]
         done    = [j for j in jobs if j.status == JobStatus.DONE]
 
+        # Notificaciones nativas
+        if cfg.get("notifications"):
+            for j in done:
+                if j.id not in self._notified_jobs:
+                    self._notified_jobs.add(j.id)
+                    try:
+                        plyer.notification.notify(
+                            title="Prism - Trabajo completado",
+                            message=f"Se ha terminado de procesar: {j.name}",
+                            app_name="Prism",
+                            timeout=5
+                        )
+                    except Exception:
+                        pass
+        else:
+            # Simplemente los marcamos como notificados para que no se acumulen
+            for j in done:
+                self._notified_jobs.add(j.id)
+
         if running:
             self._jobs_status.configure(
                 text=f"⚙ {len(running)} en progreso · {len(pending)} en cola",
@@ -322,26 +377,64 @@ class PrismShell(TkinterDnD.Tk):
         return self.job_queue.submit(name, fn, *args, on_done=on_done, **kwargs)
 
 
-    # ── System Tray ───────────────────────────────────────────────────────────
+    # ── System Tray & Settings ────────────────────────────────────────────────
+
+    def _open_settings(self):
+        win = ctk.CTkToplevel(self)
+        win.title("Ajustes de Prism")
+        win.geometry("400x320")
+        win.resizable(False, False)
+        win.attributes("-topmost", True)
+        win.configure(bg=BG_DARK)
+        
+        ctk.CTkLabel(win, text="Preferencias", font=("Segoe UI", 18, "bold"), text_color=TEXT_PRI).pack(pady=(20, 20))
+        
+        tray_var = ctk.BooleanVar(value=cfg.get("close_to_tray", False))
+        notif_var = ctk.BooleanVar(value=cfg.get("notifications", True))
+        
+        # Minimizar
+        ctk.CTkSwitch(
+            win, text="Minimizar a la bandeja del sistema (Reloj) al cerrar", 
+            variable=tray_var, font=("Segoe UI", 12), text_color=TEXT_PRI
+        ).pack(fill="x", padx=30, pady=15)
+        
+        # Notificaciones
+        ctk.CTkSwitch(
+            win, text="Notificaciones flotantes de Windows", 
+            variable=notif_var, font=("Segoe UI", 12), text_color=TEXT_PRI
+        ).pack(fill="x", padx=30, pady=15)
+
+        # Apply
+        def apply_changes():
+            cfg.set("close_to_tray", tray_var.get())
+            cfg.set("notifications", notif_var.get())
+            win.destroy()
+            self.set_status("Ajustes aplicados correctamente", success=True)
+            
+        ctk.CTkButton(
+            win, text="Aplicar y Cerrar", font=("Segoe UI", 13, "bold"),
+            fg_color=ACCENT, hover_color=ACCENT, text_color="white",
+            height=36, corner_radius=8, command=apply_changes
+        ).pack(pady=30)
 
     def _hide_window(self):
-        """Oculta la ventana y activa el icono en el área de notificación."""
+        """Oculta la ventana y activa el icono en el área de notificación si está configurado."""
+        if not cfg.get("close_to_tray"):
+            self.quit()
+            return
+            
         self.withdraw()
 
         try:
-            # Intentará cargar tu logo cuando lo tengas
             image = Image.open("icon.png")
         except Exception:
-            # Si aún no lo has creado, genera un recuadro negro temporal
-            image = Image.new('RGB', (64, 64), color='black')
+            image = Image.new('RGB', (64, 64), color='white')
 
         menu = pystray.Menu(
             pystray.MenuItem('Abrir Prism', self._show_window, default=True),
             pystray.MenuItem('Salir', self._quit_app)
         )
         self.tray_icon = pystray.Icon("Prism", image, "Prism", menu)
-
-        # Debe ejecutarse en su propio hilo para no congelar la app
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def _show_window(self, icon, item):

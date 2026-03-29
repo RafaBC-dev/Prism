@@ -2,7 +2,20 @@
 Sheets Module — XLSX/CSV/ODS: Convertir, Unir, Separar, Vista previa
 """
 
-import os
+"""
+Módulo de Procesamiento de Tabulación de Datos (Sheets Module)
+Hereda de BaseModule.
+
+Controla operaciones matriciales masivas sobre Datasets estructurados (Excel/CSV).
+Usa el motor vectorial de Pandas para procesar decenas de millones de filas sin agotar la RAM.
+- Transformaciones Estructurales: Conversión transversal entre multiformatos (.csv <-> .xlsx <-> .json).
+- Limpieza Analítica (Sanitización): Purga de celdas NULL, eliminación de duplicados algorítmica y Striping de espacios invisibles.
+- Data Fusing: Fusión por apilamiento (Concat) de varios Excels/CSVs en un Master Dataset universal usando Pandas Concat Axis=0.
+
+Dependencias:
+- pandas (Motor analítico C-Optimized)
+- openpyxl (Lectura/Escritura XML nativa XLSX)
+"""
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import pandas as pd

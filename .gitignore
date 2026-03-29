@@ -35,3 +35,5 @@ nuitka-crash-report.xml
 *.temp.pdf
 concat_list.txt
 palette.png
+.u2net/
+

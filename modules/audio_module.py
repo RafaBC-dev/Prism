@@ -1,6 +1,20 @@
 """
-Audio Module — Convertir, Cortar, Unir, Volumen, Extraer de vídeo
-Backend: pydub (siempre) + FFmpeg si está disponible (más formatos y velocidad)
+Módulo de Procesamiento de Audio e IA (Audio Module)
+Hereda de BaseModule.
+
+Este módulo centraliza todas las operaciones de sonido:
+- Transcripción IA nativa (Whisper) ejecutada en background.
+- Extracción de pistas de audio desde contenedores de vídeo (.mp4, .mkv).
+- Conversión, recorte, re-muestreo y limitación de volumen.
+
+Dependencias clave:
+- pydub (Fallback nativo si FFmpeg no está presente)
+- FFmpeg (Vía _run_ffmpeg embebido)
+- Whisper/PyTorch (Carga demorada en hilo fantasma `_preload_ai` para no bloquear GUI)
+
+Clases y Funciones principales:
+- `TranscriptionPanel`, `ConvertAudioPanel`: Sub-paneles gráficos con UI dedicada.
+- `_ai_transcribe_task()`: Puntero de ejecución pesado para procesar Whisper en la JobQueue.
 """
 
 import os
@@ -30,6 +44,14 @@ TOOLS = [
     ("volume",     "🔊", "Ajustar Volumen"),
 ]
 
+import threading
+def _preload_ai():
+    try:
+        import torch
+        import whisper
+    except:
+        pass
+threading.Thread(target=_preload_ai, daemon=True).start()
 
 # ── Widget de Vista Previa de Audio/Texto ─────────────────────────────────────
 

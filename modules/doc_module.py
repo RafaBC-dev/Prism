@@ -1,4 +1,18 @@
-import os
+"""
+Módulo de Procesamiento de Texto Plano y Rico (Docs Module)
+Hereda de BaseModule.
+
+Controla operaciones estructurales sobre procesadores de texto (Word, MD, TXT).
+- Conversión masiva de Documentos Markdown a HTML, o Docx a Texto Libre.
+- Fusión recursiva (Concat) de varios archivos en un único volumen TXT o Markdown 
+  para alimentar LLMs de forma agregada.
+- Eliminación de saltos de línea y formateadores residuales invisibles (Normalización).
+- Extracción purificada de datos DOCX (python-docx).
+
+Dependencias:
+- python-docx (Lectura de parsers MS Word XML)
+- markdown (Para render de MD a HTML)
+"""
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 import subprocess

@@ -2,7 +2,22 @@
 Images Module — Prism Edition (IA Remove BG + GPU Support)
 """
 
-import os
+"""
+Módulo de Flujos Gráficos e IA Visual (Images Module)
+Hereda de BaseModule.
+
+Esta sección maneja transformaciones matriciales y de deep-learning de imágenes:
+- Neural Background Removal (U2NET via Rembg) con pre-caching agresivo para no bloquear interfaz.
+- Eliminación de canales Alfa.
+- Generación y extracción de paletas HEX/RGB dominantes (K-Means heurístico / Pillow_heif).
+- Renderizado de Marcas de Agua (escalado relativo a la resolución del host).
+- Conversión universal (WebP, JPG, ICO, PNG) preservando ratio de compresión.
+
+Dependencias:
+- Pillow (Pil): Base rotacional y reescalados.
+- Rembg/onnxruntime: IA de fondo.
+- Pillow_heif: (Fallo silencioso opcional) Para leer fotogramas Apple HEIC.
+"""
 import customtkinter as ctk
 from PIL import Image
 import onnxruntime as ort
@@ -31,14 +46,40 @@ TOOLS = [
 
 # ── Lógica de IA (Motor) ──────────────────────────────────────────────────────
 
+import threading
+
+# Pre-carga suave en segundo plano para evitar congelar la interfaz 
+# pero mantener la IA pre-cachead en RAM para que no haga deadlock en la cola de trabajos.
+def _preload_ai():
+    try:
+        import onnxruntime
+        from rembg import remove, new_session
+    except:
+        pass
+threading.Thread(target=_preload_ai, daemon=True).start()
+
+def _get_ai_session():
+    import onnxruntime as ort
+    from rembg import new_session
+    # Leemos de ONNX solo los providers viables para no trabarnos en DLLs rotas
+    providers = ort.get_available_providers()
+    if 'CUDAExecutionProvider' in providers:
+        sel = ['CUDAExecutionProvider']
+    elif 'DmlExecutionProvider' in providers:
+        sel = ['DmlExecutionProvider']
+    else:
+        sel = ['CPUExecutionProvider']
+    return new_session("u2net", providers=sel)
+
 def _ai_remove_bg_task(input_path: str, output_path: str, progress_cb=None):
     from rembg import remove
     """Tarea principal de eliminación de fondo para la cola de trabajos."""
     try:
+        session = _get_ai_session()
         with open(input_path, 'rb') as i:
             input_data = i.read()
-            # Proceso de IA automático (rembg ya elige el mejor provider)
-            output_data = remove(input_data)     
+            # Ya precargado, instántaneo
+            output_data = remove(input_data, session=session)     
         with open(output_path, 'wb') as o:
             o.write(output_data)
         return output_path

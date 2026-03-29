@@ -1,3 +1,10 @@
+"""
+Módulo Base de Especialización
+Clase abstracta de la que heredan todos los módulos de procesamiento (Audio, PDF, etc).
+Proporciona acceso directo al bus central (App) y gestiona de forma transparente
+la inserción de componentes visuales estándar (Divisores, Paneles).
+"""
+
 import customtkinter as ctk
 from abc import abstractmethod
 

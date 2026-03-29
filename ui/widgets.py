@@ -278,8 +278,19 @@ class JobPanel(ctk.CTkFrame):
 
             ctk.CTkLabel(card, text=job.name, font=("Segoe UI", 11, "bold"),
                          text_color=TEXT_PRI, anchor="w").grid(row=0, column=0, padx=10, pady=(8, 2), sticky="w")
-            ctk.CTkLabel(card, text=label, font=("Segoe UI", 10),
-                         text_color=color, anchor="w").grid(row=1, column=0, padx=10, sticky="w")
+            info_frame = ctk.CTkFrame(card, fg_color="transparent")
+            info_frame.grid(row=1, column=0, padx=10, sticky="ew")
+            
+            ctk.CTkLabel(info_frame, text=label, font=("Segoe UI", 10),
+                         text_color=color, anchor="w").pack(side="left")
+
+            if job.status == JobStatus.DONE and isinstance(job.result, str) and os.path.exists(job.result):
+                import subprocess
+                def open_folder(path=job.result):
+                    subprocess.run(['explorer', '/select,', os.path.normpath(path)])
+                ctk.CTkButton(info_frame, text="📂 Abrir", width=50, height=20, font=("Segoe UI", 10),
+                              fg_color="transparent", hover_color=BORDER, text_color=TEXT_PRI,
+                              command=open_folder).pack(side="right", padx=5)
 
             if job.status == JobStatus.RUNNING:
                 bar = ctk.CTkProgressBar(card, height=4, corner_radius=2,

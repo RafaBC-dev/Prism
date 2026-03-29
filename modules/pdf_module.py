@@ -2,7 +2,19 @@
 PDF Module — Unir, Separar, Extraer, Rotar, Comprimir, Contraseña
 """
 
-import os
+"""
+Módulo de Arquitectura de Documentos PDF (PDF Module)
+Hereda de BaseModule.
+
+Controla operaciones estructurales sobre las páginas PDF y rasterización en mapas de bits.
+- Extraer páginas individuales, Dividir el libro por la mitad o Unir encuadernaciones.
+- Rotar y limpiar atributos inútiles (purga metadata).
+- Renderizar e Imprimir a Imágenes (DPI-Aware) usando PyMuPDF o Poppler como backend primario.
+
+Dependencias:
+- pypdf2 / pypdf (Modificaciones de vector)
+- fitz (PyMuPDF) y pdf2image (Conversión fotográfica con bindings en poppler)
+"""
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 from pypdf import PdfReader, PdfWriter
