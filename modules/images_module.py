@@ -27,7 +27,8 @@ from tkinter import messagebox, filedialog
 # Importamos las bases y constantes del proyecto
 from modules.base_module import (
     BaseModule, BasePanel, BG_DARK, BG_CARD, BG_ITEM,
-    ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER, DANGER
+    ACCENT, ACCENT_H, TEXT_PRI, TEXT_SEC, BORDER, DANGER,
+    resolve_tool_path
 )
 from core.job_queue import JobStatus
 from ui.widgets import DropZone, FileListWidget
@@ -70,6 +71,14 @@ threading.Thread(target=_preload_ai, daemon=True).start()
 def _get_ai_session():
     import onnxruntime as ort
     from rembg import new_session
+    import os
+
+    # Localizamos el modelo de forma portable para evitar descargas
+    model_path = resolve_tool_path(".u2net", "u2net.onnx")
+    if os.path.exists(model_path):
+        # rembg usa la variable U2NET_HOME para buscar sus modelos
+        os.environ["U2NET_HOME"] = os.path.dirname(model_path)
+
     # Leemos de ONNX solo los providers viables para no trabarnos en DLLs rotas
     providers = ort.get_available_providers()
     if 'CUDAExecutionProvider' in providers:
@@ -123,10 +132,20 @@ class PreviewPanel(ctk.CTkFrame):
         ctk.CTkLabel(f, text=title, font=("Segoe UI", 10), text_color=TEXT_SEC).place(x=10, y=5)
         return f
 
+    def reset(self):
+        """Limpia las miniaturas y vuelve al estado inicial."""
+        self.orig_img_lbl.configure(image=None, text="Sin imagen")
+        self.res_img_lbl.configure(image=None, text="Esperando...")
+        if hasattr(self.orig_img_lbl, "_img_ref"): self.orig_img_lbl._img_ref = None
+        if hasattr(self.res_img_lbl, "_img_ref"): self.res_img_lbl._img_ref = None
+
+        
     def update_previews(self, original_path, result_path=None):
-        """Actualiza las miniaturas de las imágenes."""
         for path, lbl in [(original_path, self.orig_img_lbl), (result_path, self.res_img_lbl)]:
             if not path or not os.path.exists(path): continue
+            ext = os.path.splitext(path)[1].lower()
+            if ext not in [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".gif"]:
+                continue
             try:
                 img = Image.open(path)
                 img.thumbnail((250, 180))
@@ -134,7 +153,8 @@ class PreviewPanel(ctk.CTkFrame):
                 lbl.configure(image=ctk_img, text="")
                 lbl._img_ref = ctk_img  # Evita que el GC de Python destruya la imagen
             except Exception:
-                lbl.configure(text="Error carga")
+                lbl.configure(image=None, text="Error carga")
+                lbl._img_ref = None
 
 
 # ── Panel Base para Imágenes ──────────────────────────────────────────────────
@@ -163,9 +183,13 @@ class _BaseImgPanel(BasePanel):
         self._drop = DropZone(self, on_files=self._on_drop, extensions=self.allowed_exts, height=100)
         self._drop.grid(row=1, column=0, sticky="ew", padx=24, pady=(12, 8))
         
-        self._file_list = FileListWidget(self)
+        self._file_list = FileListWidget(self, on_change=self._on_file_list_change)
         self._file_list.grid(row=2, column=0, sticky="nsew", padx=24, pady=(0, 8))
         self.rowconfigure(2, weight=1)
+
+    def _on_file_list_change(self):
+       if not self._file_list.paths and hasattr(self.master, 'preview'):
+           self.master.preview.reset()
 
     def _on_drop(self, paths):
         if not self.multi_file: self._file_list.clear()
@@ -794,38 +818,3 @@ def _pdf_to_images(path: str, out_dir: str, fmt: str, dpi: int, progress_cb=None
         if 'doc' in locals():
             doc.close()
     return f"Conversión exitosa.\n{total_pages} imágenes guardadas en:\n{out_dir}"
-
-def _ai_remove_bg_task(input_path: str, output_path: str, progress_cb=None):
-    """
-    Elimina el fondo de una imagen usando la librería rembg.
-    Utiliza u2net por defecto bajo el capó de rembg.
-    """
-    try:
-        from rembg import remove
-        from PIL import Image
-        import io
-
-        # Cargamos entrada
-        with open(input_path, 'rb') as i:
-            input_bytes = i.read()
-        
-        if progress_cb: progress_cb(0.3)
-        
-        # Procesamiento IA
-        output_bytes = remove(input_bytes)
-        
-        if progress_cb: progress_cb(0.8)
-        
-        # Guardado (forzando PNG para transparencia)
-        with open(output_path, 'wb') as o:
-            o.write(output_bytes)
-            
-        if progress_cb: progress_cb(1.0)
-        return output_path
-    except Exception as e:
-        raise RuntimeError(f"Error en IA de fondo: {str(e)}")
-        
-    except Exception as e:
-        return f"Error crítico en la conversión de PDF: {str(e)}"
-
-

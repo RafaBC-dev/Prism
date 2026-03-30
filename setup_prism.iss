@@ -27,6 +27,7 @@ Source: "C:\Users\rafae\Desktop\Prism\dist\Prism\*"; DestDir: "{app}"; Flags: ig
 
 ; Instalar el modelo Whisper en la cache del usuario
 Source: "C:\Users\rafae\Desktop\Prism\dist\Prism\small.pt"; DestDir: "{%USERPROFILE}\.cache\whisper"; Flags: ignoreversion
+Source: "C:\Users\rafae\Desktop\Prism\dist\Prism\.u2net\u2net.onnx"; DestDir: "{%USERPROFILE}\.u2net"; Flags: ignoreversion
 
 [Icons]
 ; Acceso directo en el menú inicio
